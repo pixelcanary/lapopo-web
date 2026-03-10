@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Edit, Gavel, Package, Loader2, LogOut, Heart, Trophy, Bell, Star, Crown, AlertTriangle, CreditCard, CheckCircle } from 'lucide-react';
+import { Edit, Gavel, Package, Loader2, LogOut, Heart, Trophy, Bell, Star, Crown, AlertTriangle, CreditCard, CheckCircle, Send, Key, Lock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
@@ -8,6 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { AuctionCard } from '@/components/AuctionCard';
 import { StarRating } from '@/components/StarRating';
+import { BadgeDisplay } from '@/components/BadgeDisplay';
 import { useAuth } from '@/context/AuthContext';
 import api from '@/lib/api';
 import { toast } from 'sonner';
@@ -23,6 +24,13 @@ export default function ProfilePage() {
   const [notifications, setNotifications] = useState([]);
   const [ratings, setRatings] = useState([]);
   const [disputes, setDisputes] = useState([]);
+  const [badges, setBadges] = useState([]);
+  const [conversations, setConversations] = useState([]);
+  const [pwdCurrent, setPwdCurrent] = useState('');
+  const [pwdNew, setPwdNew] = useState('');
+  const [pwdConfirm, setPwdConfirm] = useState('');
+  const [changingPwd, setChangingPwd] = useState(false);
+  const [showPwdForm, setShowPwdForm] = useState(false);
 
   useEffect(() => {
     if (!authLoading && !user) { navigate('/auth?tab=login'); return; }
@@ -37,6 +45,8 @@ export default function ProfilePage() {
       setEditName(res.data.user?.name || '');
       setRatings(res.data.ratings || []);
       setDisputes(res.data.disputes || []);
+      setBadges(res.data.badges || []);
+      try { const cRes = await api.get('/chat/conversaciones'); setConversations(cRes.data || []); } catch {}
     } catch { toast.error('Error al cargar perfil'); }
     finally { setLoading(false); }
   };
@@ -47,6 +57,19 @@ export default function ProfilePage() {
       setNotifications(res.data.notifications || []);
     } catch { /* ignore */ }
   };
+
+  const handleChangePassword = async () => {
+    if (pwdNew.length < 8) { toast.error('Minimo 8 caracteres'); return; }
+    if (pwdNew !== pwdConfirm) { toast.error('Las contrasenas no coinciden'); return; }
+    setChangingPwd(true);
+    try {
+      await api.put('/auth/cambiar-password', { current_password: pwdCurrent, new_password: pwdNew });
+      toast.success('Contrasena actualizada');
+      setPwdCurrent(''); setPwdNew(''); setPwdConfirm(''); setShowPwdForm(false);
+    } catch (err) { toast.error(err.response?.data?.detail || 'Error'); }
+    finally { setChangingPwd(false); }
+  };
+
 
   const handleSave = async () => {
     setSaving(true);
@@ -102,7 +125,11 @@ export default function ProfilePage() {
                   <CheckCircle className="w-3 h-3 mr-1" /> Vendedor verificado
                 </Badge>
               )}
+              {badges.length > 0 && <div className="mt-2"><BadgeDisplay badges={badges} size="xs" /></div>}
             </div>
+            <Button variant="outline" onClick={() => setShowPwdForm(!showPwdForm)} className="rounded-full flex-shrink-0" data-testid="profile-change-pwd-btn">
+              <Lock className="w-4 h-4 mr-1" /> Contrasena
+            </Button>
             <Button variant="outline" onClick={() => navigate('/precios')} className="rounded-full flex-shrink-0" data-testid="profile-pricing-btn">
               <CreditCard className="w-4 h-4 mr-1" /> Planes
             </Button>
@@ -112,19 +139,39 @@ export default function ProfilePage() {
           </div>
         </CardContent></Card>
 
+        {showPwdForm && (
+          <Card className="border-0 shadow-sm rounded-2xl mb-6" data-testid="change-password-form">
+            <CardContent className="p-6">
+              <h2 className="font-bold text-lg text-slate-800 mb-3"><Lock className="w-5 h-5 inline mr-1" />Cambiar contrasena</h2>
+              <div className="space-y-3 max-w-sm">
+                <Input type="password" placeholder="Contrasena actual" value={pwdCurrent} onChange={(e) => setPwdCurrent(e.target.value)} className="rounded-xl" data-testid="pwd-current" />
+                <Input type="password" placeholder="Nueva contrasena (min 8 caracteres)" value={pwdNew} onChange={(e) => setPwdNew(e.target.value)} className="rounded-xl" data-testid="pwd-new" />
+                <Input type="password" placeholder="Confirmar nueva contrasena" value={pwdConfirm} onChange={(e) => setPwdConfirm(e.target.value)} className="rounded-xl" data-testid="pwd-confirm" />
+                <div className="flex gap-2">
+                  <Button onClick={handleChangePassword} disabled={changingPwd} className="bg-[#18b29c] text-white rounded-full" data-testid="pwd-submit">
+                    {changingPwd ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Key className="w-4 h-4 mr-1" />} Cambiar
+                  </Button>
+                  <Button variant="outline" onClick={() => setShowPwdForm(false)} className="rounded-full">Cancelar</Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         <Tabs defaultValue="auctions">
-          <TabsList className="w-full grid grid-cols-7 rounded-xl mb-6" data-testid="profile-tabs">
-            <TabsTrigger value="auctions" className="rounded-lg text-xs sm:text-sm" data-testid="profile-tab-auctions"><Package className="w-4 h-4 mr-1 hidden sm:block" /> Subastas</TabsTrigger>
-            <TabsTrigger value="bids" className="rounded-lg text-xs sm:text-sm" data-testid="profile-tab-bids"><Gavel className="w-4 h-4 mr-1 hidden sm:block" /> Pujas</TabsTrigger>
-            <TabsTrigger value="won" className="rounded-lg text-xs sm:text-sm" data-testid="profile-tab-won"><Trophy className="w-4 h-4 mr-1 hidden sm:block" /> Ganadas</TabsTrigger>
-            <TabsTrigger value="favorites" className="rounded-lg text-xs sm:text-sm" data-testid="profile-tab-favorites"><Heart className="w-4 h-4 mr-1 hidden sm:block" /> Favoritos</TabsTrigger>
-            <TabsTrigger value="ratings" className="rounded-lg text-xs sm:text-sm" data-testid="profile-tab-ratings"><Star className="w-4 h-4 mr-1 hidden sm:block" /> Valoraciones</TabsTrigger>
-            <TabsTrigger value="disputes" className="rounded-lg text-xs sm:text-sm relative" data-testid="profile-tab-disputes">
-              <AlertTriangle className="w-4 h-4 mr-1 hidden sm:block" /> Disputas
+          <TabsList className="w-full grid grid-cols-4 sm:grid-cols-8 rounded-xl mb-6" data-testid="profile-tabs">
+            <TabsTrigger value="auctions" className="rounded-lg text-xs" data-testid="profile-tab-auctions"><Package className="w-3.5 h-3.5 mr-0.5 hidden sm:block" />Subastas</TabsTrigger>
+            <TabsTrigger value="bids" className="rounded-lg text-xs" data-testid="profile-tab-bids"><Gavel className="w-3.5 h-3.5 mr-0.5 hidden sm:block" />Pujas</TabsTrigger>
+            <TabsTrigger value="won" className="rounded-lg text-xs" data-testid="profile-tab-won"><Trophy className="w-3.5 h-3.5 mr-0.5 hidden sm:block" />Ganadas</TabsTrigger>
+            <TabsTrigger value="favorites" className="rounded-lg text-xs" data-testid="profile-tab-favorites"><Heart className="w-3.5 h-3.5 mr-0.5 hidden sm:block" />Favoritos</TabsTrigger>
+            <TabsTrigger value="messages" className="rounded-lg text-xs" data-testid="profile-tab-messages"><Send className="w-3.5 h-3.5 mr-0.5 hidden sm:block" />Mensajes</TabsTrigger>
+            <TabsTrigger value="ratings" className="rounded-lg text-xs" data-testid="profile-tab-ratings"><Star className="w-3.5 h-3.5 mr-0.5 hidden sm:block" />Valoraciones</TabsTrigger>
+            <TabsTrigger value="disputes" className="rounded-lg text-xs relative" data-testid="profile-tab-disputes">
+              <AlertTriangle className="w-3.5 h-3.5 mr-0.5 hidden sm:block" />Disputas
               {disputes.filter(d => d.status === 'open' || d.status === 'reviewing').length > 0 && <span className="absolute -top-1 -right-1 w-4 h-4 bg-orange-500 text-white text-[9px] font-bold rounded-full flex items-center justify-center">{disputes.filter(d => d.status === 'open' || d.status === 'reviewing').length}</span>}
             </TabsTrigger>
-            <TabsTrigger value="notifications" className="rounded-lg text-xs sm:text-sm relative" data-testid="profile-tab-notifications">
-              <Bell className="w-4 h-4 mr-1 hidden sm:block" /> Avisos
+            <TabsTrigger value="notifications" className="rounded-lg text-xs relative" data-testid="profile-tab-notifications">
+              <Bell className="w-3.5 h-3.5 mr-0.5 hidden sm:block" />Avisos
               {notifications.filter(n => !n.read).length > 0 && <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white text-[9px] font-bold rounded-full flex items-center justify-center">{notifications.filter(n => !n.read).length}</span>}
             </TabsTrigger>
           </TabsList>
@@ -190,6 +237,34 @@ export default function ProfilePage() {
                 <Heart className="w-12 h-12 text-slate-300 mx-auto mb-4" />
                 <p className="text-slate-500 mb-4">Aun no tienes favoritos. Pulsa el corazon en las subastas que te interesen.</p>
                 <Button onClick={() => navigate('/')} className="bg-[#18b29c] text-white rounded-full">Explorar subastas</Button>
+              </div>
+            )}
+          </TabsContent>
+
+          <TabsContent value="messages">
+            {conversations.length > 0 ? (
+              <div className="space-y-3">
+                {conversations.map((c) => (
+                  <Card key={c.auction_id + c.other_user_id} className="border-0 shadow-sm rounded-xl cursor-pointer hover:shadow-md transition-shadow" data-testid={`convo-${c.auction_id}`} onClick={() => navigate(`/subasta/${c.auction_id}`)}>
+                    <CardContent className="p-4 flex items-center gap-3">
+                      {c.auction_image && <img src={c.auction_image} alt="" className="w-12 h-12 rounded-lg object-cover flex-shrink-0" />}
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center justify-between">
+                          <p className="font-bold text-sm text-slate-800 truncate">{c.auction_title}</p>
+                          <span className="text-[10px] text-slate-400 flex-shrink-0">{new Date(c.last_date).toLocaleDateString('es-ES')}</span>
+                        </div>
+                        <p className="text-xs text-slate-500">{c.other_user_name}</p>
+                        <p className="text-xs text-slate-400 truncate mt-0.5">{c.last_message}</p>
+                      </div>
+                      <Badge variant="outline" className="rounded-full text-xs flex-shrink-0">{c.message_count}</Badge>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-16" data-testid="empty-messages">
+                <Send className="w-12 h-12 text-slate-300 mx-auto mb-4" />
+                <p className="text-slate-500">No tienes conversaciones</p>
               </div>
             )}
           </TabsContent>

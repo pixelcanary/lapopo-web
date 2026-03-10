@@ -4,6 +4,7 @@ import { Search, Clock, Tag, MapPin, Laptop, Home as HomeIcon, Camera, Truck, Ch
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
+import { SearchAutocomplete } from '@/components/SearchAutocomplete';
 import {
   Accordion,
   AccordionContent,
@@ -101,25 +102,12 @@ export default function HomePage() {
             <p className="text-white/80 text-lg mt-4 mb-8">
               La plataforma de subastas de segunda mano para Espa&ntilde;a y Canarias
             </p>
-            <form onSubmit={handleSearch} className="flex gap-2 max-w-lg">
-              <div className="relative flex-1">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-                <Input
-                  placeholder="Buscar subastas..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-10 rounded-xl h-12 bg-white border-0 shadow-lg text-slate-800"
-                  data-testid="hero-search-input"
-                />
-              </div>
-              <Button
-                type="submit"
-                className="bg-[#ffb347] hover:bg-[#ffa01a] text-white rounded-xl h-12 px-6 font-bold shadow-lg"
-                data-testid="hero-search-btn"
-              >
-                Buscar
-              </Button>
-            </form>
+            <div className="max-w-lg">
+              <SearchAutocomplete
+                initialQuery={searchQuery}
+                onSearch={(q) => { setSearchQuery(q); fetchAuctions(); }}
+              />
+            </div>
           </div>
         </div>
       </section>

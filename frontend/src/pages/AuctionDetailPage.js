@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { ArrowLeft, MapPin, User, Gavel, Hand, Package, Loader2, Tag, ShoppingCart, XCircle, Zap, Send, Mail, Star, Crown, AlertTriangle, CheckCircle } from 'lucide-react';
+import { ArrowLeft, MapPin, User, Gavel, Hand, Package, Loader2, Tag, ShoppingCart, XCircle, Zap, Send, Mail, Star, Crown, AlertTriangle, CheckCircle, ImagePlus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -9,6 +9,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import { Countdown } from '@/components/Countdown';
 import { StarRating } from '@/components/StarRating';
+import { BadgeDisplay } from '@/components/BadgeDisplay';
 import { useAuth } from '@/context/AuthContext';
 import api, { isCanarias } from '@/lib/api';
 import { toast } from 'sonner';
@@ -45,12 +46,16 @@ export default function AuctionDetailPage() {
   const [disputeDesc, setDisputeDesc] = useState('');
   const [submittingDispute, setSubmittingDispute] = useState(false);
   const [featuredPurchasing, setFeaturedPurchasing] = useState(null);
+  const [sellerBadges, setSellerBadges] = useState([]);
+  const [chatImages, setChatImages] = useState([]);
+  const [uploadingImage, setUploadingImage] = useState(false);
 
   const fetchAuction = useCallback(async () => {
     try {
       const res = await api.get(`/subastas/${id}`);
       setAuction(res.data);
       if (!bidInit) { setBidAmount((res.data.current_price + 0.50).toFixed(2)); setBidInit(true); }
+      try { const bRes = await api.get(`/badges/usuario/${res.data.seller_id}`); setSellerBadges(bRes.data || []); } catch {}
     } catch { toast.error('Subasta no encontrada'); navigate('/'); }
     finally { setLoading(false); }
   }, [id, navigate, bidInit]);
@@ -116,15 +121,36 @@ export default function AuctionDetailPage() {
   };
 
   const sendMessage = async () => {
-    if (!newMsg.trim()) return;
-    const receiverId = user.id === auction.seller_id ? auction.winner_id : auction.seller_id;
+    if (!newMsg.trim() && chatImages.length === 0) return;
+    let receiverId;
+    if (isOwner) {
+      receiverId = auction.winner_id || auction.bids?.[auction.bids.length - 1]?.user_id;
+    } else {
+      receiverId = auction.seller_id;
+    }
     if (!receiverId) return;
     setSendingMsg(true);
     try {
-      await api.post('/mensajes', { receiver_id: receiverId, auction_id: id, content: newMsg });
-      setNewMsg(''); fetchMessages();
+      await api.post('/mensajes', { auction_id: id, receiver_id: receiverId, content: newMsg, images: chatImages });
+      setNewMsg(''); setChatImages([]); fetchMessages();
     } catch (err) { toast.error('Error al enviar'); }
     finally { setSendingMsg(false); }
+  };
+
+  const handleChatImageUpload = async (e) => {
+    const files = Array.from(e.target.files).slice(0, 3 - chatImages.length);
+    if (!files.length) return;
+    setUploadingImage(true);
+    for (const file of files) {
+      try {
+        const formData = new FormData();
+        formData.append('file', file);
+        const res = await api.post('/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
+        setChatImages(prev => [...prev, res.data.url].slice(0, 3));
+      } catch { toast.error('Error subiendo imagen'); }
+    }
+    setUploadingImage(false);
+    e.target.value = '';
   };
 
   const fetchAuctionRatings = async () => {
@@ -194,6 +220,8 @@ export default function AuctionDetailPage() {
   const minBid = auction.current_price + 0.50;
   const hasBuyNow = auction.buy_now_price && isActive;
   const canContact = isFinished && (isOwner || isWinner) && auction.winner_id;
+  const hasBid = auction.bids?.some(b => b.user_id === user?.id);
+  const canChat = user && !isOwner && (hasBid || isWinner);
 
   return (
     <div className="min-h-screen bg-[#f5f7fa] pb-20 md:pb-0">
@@ -244,8 +272,8 @@ export default function AuctionDetailPage() {
               ) : <p className="text-slate-400 text-sm" data-testid="no-bids-msg">Aun no hay pujas. Se el primero!</p>}
             </CardContent></Card>
 
-            {/* Messages section for finished auctions */}
-            {canContact && (
+            {/* Messages section */}
+            {(canContact || canChat) && (
               <Card className="mt-4 border-0 shadow-sm rounded-2xl"><CardContent className="p-6">
                 <div className="flex items-center justify-between mb-3">
                   <h2 className="font-bold text-lg text-slate-800">Mensajes</h2>
@@ -260,16 +288,33 @@ export default function AuctionDetailPage() {
                         <div key={m.id} className={`flex ${m.sender_id === user?.id ? 'justify-end' : 'justify-start'}`}>
                           <div className={`max-w-[75%] rounded-2xl px-4 py-2.5 ${m.sender_id === user?.id ? 'bg-[#18b29c] text-white' : 'bg-slate-100 text-slate-800'}`}>
                             <p className="text-sm">{m.content}</p>
+                            {m.images?.length > 0 && (
+                              <div className="flex gap-1 mt-1.5">{m.images.map((img, i) => <img key={i} src={img} alt="" className="w-20 h-20 rounded-lg object-cover cursor-pointer" onClick={() => window.open(img)} />)}</div>
+                            )}
                             <p className={`text-[10px] mt-1 ${m.sender_id === user?.id ? 'text-white/60' : 'text-slate-400'}`}>{m.sender_name} - {new Date(m.created_at).toLocaleString('es-ES')}</p>
                           </div>
                         </div>
                       )) : <p className="text-slate-400 text-sm text-center py-4">Sin mensajes aun. Inicia la conversacion.</p>}
                     </div>
+                    {chatImages.length > 0 && (
+                      <div className="flex gap-1 mb-2">{chatImages.map((img, i) => (
+                        <div key={i} className="relative">
+                          <img src={img} alt="" className="w-12 h-12 rounded-lg object-cover" />
+                          <button onClick={() => setChatImages(prev => prev.filter((_, j) => j !== i))} className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white rounded-full text-[10px] flex items-center justify-center">x</button>
+                        </div>
+                      ))}</div>
+                    )}
                     <div className="flex gap-2">
-                      <Textarea value={newMsg} onChange={(e) => setNewMsg(e.target.value)} placeholder="Escribe un mensaje..." className="rounded-xl min-h-[44px] max-h-24" data-testid="message-input" />
-                      <Button onClick={sendMessage} disabled={sendingMsg || !newMsg.trim()} className="bg-[#18b29c] text-white rounded-full px-4" data-testid="send-message-btn">
-                        {sendingMsg ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-                      </Button>
+                      <Textarea value={newMsg} onChange={(e) => setNewMsg(e.target.value)} placeholder="Escribe un mensaje..." className="rounded-xl min-h-[44px] max-h-24 flex-1" data-testid="message-input" />
+                      <div className="flex flex-col gap-1">
+                        <label className={`cursor-pointer rounded-full p-2 border hover:bg-slate-50 ${chatImages.length >= 3 ? 'opacity-50' : ''}`}>
+                          <ImagePlus className="w-4 h-4 text-slate-500" />
+                          <input type="file" accept="image/*" multiple className="hidden" onChange={handleChatImageUpload} disabled={chatImages.length >= 3 || uploadingImage} />
+                        </label>
+                        <Button onClick={sendMessage} disabled={sendingMsg || (!newMsg.trim() && chatImages.length === 0)} className="bg-[#18b29c] text-white rounded-full px-3" data-testid="send-message-btn">
+                          {sendingMsg ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                        </Button>
+                      </div>
                     </div>
                   </div>
                 )}
@@ -477,6 +522,11 @@ export default function AuctionDetailPage() {
                 <div className="flex items-center gap-2 text-slate-600"><MapPin className="w-4 h-4 text-slate-400" />{auction.location}</div>
                 <div className="flex items-center gap-2 text-slate-600"><Package className="w-4 h-4 text-slate-400" />{DELIVERY_LABELS[auction.delivery_type] || auction.delivery_type}</div>
               </div>
+              {sellerBadges.length > 0 && (
+                <div className="mt-2" data-testid="seller-badges">
+                  <BadgeDisplay badges={sellerBadges} size="xs" />
+                </div>
+              )}
             </CardContent></Card>
           </div>
         </div>

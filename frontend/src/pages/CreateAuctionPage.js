@@ -61,8 +61,15 @@ export default function CreateAuctionPage() {
   const handleImageUpload = async (e) => {
     const files = Array.from(e.target.files);
     if (form.images.length + files.length > 6) { toast.error('Maximo 6 fotos'); return; }
-    const compressed = await Promise.all(files.map(compressImage));
-    setForm({ ...form, images: [...form.images, ...compressed] });
+    for (const file of files) {
+      try {
+        const formData = new FormData();
+        formData.append('file', file);
+        const res = await api.post('/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
+        setForm(prev => ({ ...prev, images: [...prev.images, res.data.url] }));
+      } catch { toast.error('Error al subir imagen'); }
+    }
+    e.target.value = '';
   };
 
   const removeImage = (index) => setForm({ ...form, images: form.images.filter((_, i) => i !== index) });

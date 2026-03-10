@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, Header, Request
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Header, Request, UploadFile, File, Form
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -8,13 +8,24 @@ from pathlib import Path
 from pydantic import BaseModel
 from typing import List, Optional, Dict
 import uuid
+import secrets
 from datetime import datetime, timezone, timedelta
 from passlib.context import CryptContext
 import jwt
+import cloudinary
+import cloudinary.uploader
+from sendgrid import SendGridAPIClient
+from sendgrid.helpers.mail import Mail
 from emergentintegrations.payments.stripe.checkout import StripeCheckout, CheckoutSessionRequest
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
+
+cloudinary.config(
+    cloud_name=os.environ.get("CLOUDINARY_CLOUD_NAME"),
+    api_key=os.environ.get("CLOUDINARY_API_KEY"),
+    api_secret=os.environ.get("CLOUDINARY_API_SECRET"),
+)
 
 mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
@@ -87,6 +98,7 @@ class DisputeCreate(BaseModel):
 
 class DisputeMessage(BaseModel):
     content: str
+    images: Optional[List[str]] = None
 
 class DisputeStatusUpdate(BaseModel):
     status: str
@@ -96,6 +108,34 @@ class CheckoutRequest(BaseModel):
     featured_type: Optional[str] = None
     auction_id: Optional[str] = None
     origin_url: str
+
+class ChangePassword(BaseModel):
+    current_password: str
+    new_password: str
+
+class ForgotPassword(BaseModel):
+    email: str
+
+class ResetPassword(BaseModel):
+    token: str
+    new_password: str
+
+class ChatMessage(BaseModel):
+    auction_id: str
+    receiver_id: str
+    content: str
+    images: Optional[List[str]] = None
+
+class BadgeCreate(BaseModel):
+    name: str
+    description: str
+    emoji: str
+    condition_type: str
+    condition_value: int
+    auto: bool = True
+
+class BadgeAssign(BaseModel):
+    user_id: str
 
 
 # Plan & Featured constants
@@ -166,6 +206,8 @@ async def close_expired():
                 f"Has ganado la subasta \"{auction['title']}\" por {auction['current_price']:.2f} euros")
             await create_notification(auction["seller_id"], "auction_ended", auction["id"], auction["title"],
                 f"Tu subasta \"{auction['title']}\" ha terminado. Ganador: {winner['user_name']}")
+            await evaluate_badges(winner["user_id"])
+            await evaluate_badges(auction["seller_id"])
             notified = {winner["user_id"], auction["seller_id"]}
             for b in auction["bids"]:
                 if b["user_id"] not in notified:
@@ -276,6 +318,71 @@ async def count_user_auctions_this_month(user_id):
     return await db.auctions.count_documents({"seller_id": user_id, "created_at": {"$gte": start.isoformat()}})
 
 
+DEFAULT_BADGES = [
+    {"name": "Primera venta", "description": "Completaste tu primera venta", "emoji": "🏷️", "condition_type": "sales", "condition_value": 1, "auto": True},
+    {"name": "5 ventas", "description": "5 subastas vendidas", "emoji": "🎯", "condition_type": "sales", "condition_value": 5, "auto": True},
+    {"name": "10 ventas", "description": "10 subastas vendidas", "emoji": "🏆", "condition_type": "sales", "condition_value": 10, "auto": True},
+    {"name": "50 ventas", "description": "50 subastas vendidas", "emoji": "💎", "condition_type": "sales", "condition_value": 50, "auto": True},
+    {"name": "100% positivas", "description": "Todas tus valoraciones son positivas (min 3)", "emoji": "⭐", "condition_type": "positive_ratings", "condition_value": 100, "auto": True},
+    {"name": "Comprador frecuente", "description": "Has ganado 5 subastas", "emoji": "🛒", "condition_type": "purchases", "condition_value": 5, "auto": True},
+    {"name": "Canario", "description": "Has vendido en las Islas Canarias", "emoji": "🌴", "condition_type": "canarias_sales", "condition_value": 1, "auto": True},
+]
+
+
+async def evaluate_badges(user_id):
+    badges = await db.badges.find({"auto": True}, {"_id": 0}).to_list(100)
+    existing = set()
+    for ub in await db.user_badges.find({"user_id": user_id}, {"_id": 0, "badge_id": 1}).to_list(100):
+        existing.add(ub["badge_id"])
+    for badge in badges:
+        if badge["id"] in existing:
+            continue
+        earned = False
+        ct = badge["condition_type"]
+        cv = badge["condition_value"]
+        if ct == "sales":
+            count = await db.auctions.count_documents({"seller_id": user_id, "status": "finished", "winner_id": {"$exists": True}})
+            earned = count >= cv
+        elif ct == "purchases":
+            count = await db.auctions.count_documents({"winner_id": user_id, "status": "finished"})
+            earned = count >= cv
+        elif ct == "positive_ratings":
+            ratings = await db.ratings.find({"rated_id": user_id}, {"_id": 0, "rating": 1}).to_list(1000)
+            if len(ratings) >= 3:
+                earned = all(r["rating"] >= 4 for r in ratings)
+        elif ct == "canarias_sales":
+            count = await db.auctions.count_documents({"seller_id": user_id, "status": "finished", "location": {"$in": CANARY_ISLANDS}})
+            earned = count >= cv
+        elif ct == "bids_received":
+            pipeline = [{"$match": {"seller_id": user_id}}, {"$group": {"_id": None, "total": {"$sum": "$bid_count"}}}]
+            agg = await db.auctions.aggregate(pipeline).to_list(1)
+            total = agg[0]["total"] if agg else 0
+            earned = total >= cv
+        elif ct == "positive_pct":
+            ratings = await db.ratings.find({"rated_id": user_id}, {"_id": 0, "rating": 1}).to_list(1000)
+            if len(ratings) >= 3:
+                pct = (sum(1 for r in ratings if r["rating"] >= 4) / len(ratings)) * 100
+                earned = pct >= cv
+        if earned:
+            await db.user_badges.insert_one({"user_id": user_id, "badge_id": badge["id"], "badge_name": badge["name"], "awarded_at": datetime.now(timezone.utc).isoformat()})
+
+
+async def send_recovery_email(email: str, token: str, frontend_url: str):
+    try:
+        sg = SendGridAPIClient(os.environ.get("SENDGRID_API_KEY"))
+        reset_link = f"{frontend_url}/auth?tab=reset&token={token}"
+        msg = Mail(
+            from_email=os.environ.get("SENDGRID_FROM_EMAIL", "noreply@lapopo.es"),
+            to_emails=email,
+            subject="Lapopo - Recupera tu contrasena",
+            html_content=f'<p>Hola,</p><p>Haz clic en el siguiente enlace para restablecer tu contrasena:</p><p><a href="{reset_link}">{reset_link}</a></p><p>Este enlace expira en 1 hora.</p><p>Si no solicitaste este cambio, ignora este email.</p>',
+        )
+        sg.send(msg)
+        logger.info(f"Recovery email sent to {email}")
+    except Exception as e:
+        logger.error(f"SendGrid error: {e}")
+
+
 # AUTH ENDPOINTS
 @api_router.post("/auth/register")
 async def register(data: UserRegister):
@@ -350,6 +457,16 @@ async def list_auctions(
     auctions = await db.auctions.find(q, {"_id": 0}).sort(sort_field).to_list(100)
     auctions = await enrich_with_ratings(auctions)
     auctions = await enrich_with_featured(auctions)
+    return auctions
+
+@api_router.get("/subastas/autocomplete")
+async def search_autocomplete(q: str = ""):
+    if len(q) < 2:
+        return []
+    auctions = await db.auctions.find(
+        {"status": "active", "title": {"$regex": q, "$options": "i"}},
+        {"_id": 0, "id": 1, "title": 1, "images": 1, "current_price": 1}
+    ).limit(8).to_list(8)
     return auctions
 
 @api_router.get("/subastas/{auction_id}")
@@ -465,6 +582,9 @@ async def get_user_profile(user_id: str):
     fav_auctions = await db.auctions.find({"id": {"$in": fav_ids}}, {"_id": 0}).to_list(100) if fav_ids else []
     ratings = await db.ratings.find({"rated_id": user_id}, {"_id": 0}).sort("created_at", -1).to_list(100)
     disputes = await db.disputes.find({"$or": [{"reporter_id": user_id}, {"reported_id": user_id}]}, {"_id": 0}).sort("created_at", -1).to_list(50)
+    user_badges = await db.user_badges.find({"user_id": user_id}, {"_id": 0}).to_list(100)
+    badge_ids = [ub["badge_id"] for ub in user_badges]
+    badges_data = await db.badges.find({"id": {"$in": badge_ids}}, {"_id": 0}).to_list(100) if badge_ids else []
     return {
         "user": user,
         "auctions": auctions,
@@ -476,6 +596,7 @@ async def get_user_profile(user_id: str):
         "rating_count": user.get("rating_count", 0),
         "plan": user.get("plan", "free"),
         "disputes": disputes,
+        "badges": badges_data,
     }
 
 @api_router.put("/usuarios/{user_id}")
@@ -522,6 +643,8 @@ async def buy_now(auction_id: str, user=Depends(get_current_user)):
                 f"La subasta \"{auction['title']}\" ha sido comprada por otro usuario")
             notified.add(b["user_id"])
     updated = await db.auctions.find_one({"id": auction_id}, {"_id": 0})
+    await evaluate_badges(user["user_id"])
+    await evaluate_badges(auction["seller_id"])
     return updated
 
 
@@ -607,15 +730,24 @@ async def mark_all_read(user=Depends(get_current_user)):
     return {"message": "ok"}
 
 
-# MESSAGES
+# MESSAGES / CHAT
 @api_router.post("/mensajes")
-async def send_message(data: MessageCreate, user=Depends(get_current_user)):
-    doc = {"id": str(uuid.uuid4()), "auction_id": data.auction_id, "sender_id": user["user_id"],
-           "sender_name": user["name"], "receiver_id": data.receiver_id, "content": data.content,
-           "created_at": datetime.now(timezone.utc).isoformat()}
-    await db.messages.insert_one(doc)
+async def send_message(data: ChatMessage, user=Depends(get_current_user)):
     auction = await db.auctions.find_one({"id": data.auction_id}, {"_id": 0})
-    title = auction["title"] if auction else "subasta"
+    if not auction:
+        raise HTTPException(404, "Subasta no encontrada")
+    uid = user["user_id"]
+    is_seller = uid == auction["seller_id"]
+    is_bidder = any(b["user_id"] == uid for b in auction.get("bids", []))
+    is_winner = uid == auction.get("winner_id")
+    if not is_seller and not is_bidder and not is_winner:
+        raise HTTPException(403, "Debes pujar primero para enviar mensajes")
+    images = data.images[:3] if data.images else []
+    doc = {"id": str(uuid.uuid4()), "auction_id": data.auction_id, "sender_id": uid,
+           "sender_name": user["name"], "receiver_id": data.receiver_id, "content": data.content,
+           "images": images, "created_at": datetime.now(timezone.utc).isoformat()}
+    await db.messages.insert_one(doc)
+    title = auction["title"]
     await create_notification(data.receiver_id, "message", data.auction_id, title,
         f"Nuevo mensaje de {user['name']} sobre \"{title}\"")
     doc.pop("_id", None)
@@ -626,8 +758,45 @@ async def get_messages(auction_id: str, user=Depends(get_current_user)):
     msgs = await db.messages.find(
         {"auction_id": auction_id, "$or": [{"sender_id": user["user_id"]}, {"receiver_id": user["user_id"]}]},
         {"_id": 0}
-    ).sort("created_at", 1).to_list(100)
+    ).sort("created_at", 1).to_list(200)
     return msgs
+
+@api_router.get("/chat/conversaciones")
+async def get_conversations(user=Depends(get_current_user)):
+    uid = user["user_id"]
+    pipeline = [
+        {"$match": {"$or": [{"sender_id": uid}, {"receiver_id": uid}]}},
+        {"$sort": {"created_at": -1}},
+        {"$group": {
+            "_id": "$auction_id",
+            "last_message": {"$first": "$$ROOT"},
+            "count": {"$sum": 1},
+        }},
+        {"$sort": {"last_message.created_at": -1}},
+        {"$limit": 50},
+    ]
+    convos = await db.messages.aggregate(pipeline).to_list(50)
+    result = []
+    for c in convos:
+        lm = c["last_message"]
+        lm.pop("_id", None)
+        auction = await db.auctions.find_one({"id": c["_id"]}, {"_id": 0, "title": 1, "images": 1, "seller_id": 1, "seller_name": 1})
+        other_id = lm["receiver_id"] if lm["sender_id"] == uid else lm["sender_id"]
+        other_name = lm.get("sender_name") if lm["sender_id"] != uid else None
+        if not other_name:
+            other_user = await db.users.find_one({"id": other_id}, {"_id": 0, "name": 1})
+            other_name = other_user["name"] if other_user else "Usuario"
+        result.append({
+            "auction_id": c["_id"],
+            "auction_title": auction["title"] if auction else "",
+            "auction_image": auction["images"][0] if auction and auction.get("images") else "",
+            "other_user_id": other_id,
+            "other_user_name": other_name,
+            "last_message": lm["content"],
+            "last_date": lm["created_at"],
+            "message_count": c["count"],
+        })
+    return result
 
 
 # FAVORITES
@@ -715,6 +884,7 @@ async def create_rating(data: RatingCreate, user=Depends(get_current_user)):
     all_ratings = await db.ratings.find({"rated_id": data.rated_user_id}, {"_id": 0, "rating": 1}).to_list(1000)
     avg = round(sum(r["rating"] for r in all_ratings) / len(all_ratings), 2)
     await db.users.update_one({"id": data.rated_user_id}, {"$set": {"rating_avg": avg, "rating_count": len(all_ratings)}})
+    await evaluate_badges(data.rated_user_id)
     doc.pop("_id", None)
     return doc
 
@@ -1016,8 +1186,14 @@ async def add_dispute_message(dispute_id: str, data: DisputeMessage, user=Depend
         raise HTTPException(403, "No tienes acceso")
     if d["status"] == "closed":
         raise HTTPException(400, "La disputa esta cerrada")
-    msg = {"id": str(uuid.uuid4()), "sender_id": uid, "sender_name": user["name"], "content": data.content, "created_at": datetime.now(timezone.utc).isoformat()}
+    images = data.images[:3] if hasattr(data, 'images') and data.images else []
+    msg = {"id": str(uuid.uuid4()), "sender_id": uid, "sender_name": user["name"], "content": data.content, "images": images, "is_admin": is_admin, "created_at": datetime.now(timezone.utc).isoformat()}
     await db.disputes.update_one({"id": dispute_id}, {"$push": {"messages": msg}})
+    for notify_id in [d["reporter_id"], d["reported_id"]]:
+        if notify_id != uid:
+            role = "Admin" if is_admin else user["name"]
+            await create_notification(notify_id, "dispute_message", d["auction_id"], d["auction_title"],
+                f"Nuevo mensaje de {role} en tu disputa sobre \"{d['auction_title']}\"")
     return msg
 
 @api_router.get("/admin/disputas")
@@ -1055,6 +1231,155 @@ async def update_admin_config(config: dict, user=Depends(require_admin)):
     if "payments_enabled" in config:
         await db.settings.update_one({"key": "payments_enabled"}, {"$set": {"value": config["payments_enabled"]}}, upsert=True)
     return {"message": "Configuracion actualizada"}
+
+
+# CLOUDINARY UPLOAD
+@api_router.post("/upload")
+async def upload_image(file: UploadFile = File(...), user=Depends(get_current_user)):
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(400, "Solo se permiten imagenes")
+    contents = await file.read()
+    if len(contents) > 10 * 1024 * 1024:
+        raise HTTPException(400, "Imagen demasiado grande (max 10MB)")
+    result = cloudinary.uploader.upload(contents, folder="lapopo", resource_type="image")
+    return {"url": result["secure_url"], "public_id": result["public_id"]}
+
+@api_router.post("/upload/base64")
+async def upload_base64(data: dict, user=Depends(get_current_user)):
+    img = data.get("image", "")
+    if not img:
+        raise HTTPException(400, "Imagen requerida")
+    result = cloudinary.uploader.upload(img, folder="lapopo", resource_type="image")
+    return {"url": result["secure_url"], "public_id": result["public_id"]}
+
+
+# SEARCH AUTOCOMPLETE - already moved above
+
+
+# PASSWORD CHANGE & RECOVERY
+@api_router.put("/auth/cambiar-password")
+async def change_password(data: ChangePassword, user=Depends(get_current_user)):
+    if len(data.new_password) < 8:
+        raise HTTPException(400, "La contrasena debe tener al menos 8 caracteres")
+    u = await db.users.find_one({"id": user["user_id"]})
+    if not u or not pwd_context.verify(data.current_password, u["password_hash"]):
+        raise HTTPException(400, "Contrasena actual incorrecta")
+    new_hash = pwd_context.hash(data.new_password)
+    await db.users.update_one({"id": user["user_id"]}, {"$set": {"password_hash": new_hash}})
+    return {"message": "Contrasena actualizada correctamente"}
+
+@api_router.post("/auth/recuperar-password")
+async def forgot_password(data: ForgotPassword, request: Request):
+    token = secrets.token_urlsafe(32)
+    expires = datetime.now(timezone.utc) + timedelta(hours=1)
+    u = await db.users.find_one({"email": data.email})
+    if u:
+        await db.password_resets.insert_one({"email": data.email, "token": token, "expires_at": expires.isoformat(), "used": False})
+        frontend_url = request.headers.get("origin", request.headers.get("referer", "https://lapopo.es")).rstrip("/")
+        await send_recovery_email(data.email, token, frontend_url)
+    return {"message": "Si ese email esta registrado, recibiras un enlace de recuperacion"}
+
+@api_router.post("/auth/resetear-password")
+async def reset_password(data: ResetPassword):
+    if len(data.new_password) < 8:
+        raise HTTPException(400, "La contrasena debe tener al menos 8 caracteres")
+    reset = await db.password_resets.find_one({"token": data.token, "used": False})
+    if not reset:
+        raise HTTPException(400, "Enlace invalido o expirado")
+    if datetime.fromisoformat(reset["expires_at"]) < datetime.now(timezone.utc):
+        raise HTTPException(400, "El enlace ha expirado")
+    u = await db.users.find_one({"email": reset["email"]})
+    if not u:
+        raise HTTPException(400, "Usuario no encontrado")
+    new_hash = pwd_context.hash(data.new_password)
+    await db.users.update_one({"id": u["id"]}, {"$set": {"password_hash": new_hash}})
+    await db.password_resets.update_one({"token": data.token}, {"$set": {"used": True}})
+    return {"message": "Contrasena restablecida correctamente"}
+
+
+# BADGES
+@api_router.get("/badges")
+async def list_badges():
+    return await db.badges.find({}, {"_id": 0}).to_list(200)
+
+@api_router.get("/badges/usuario/{user_id}")
+async def get_user_badges(user_id: str):
+    ub = await db.user_badges.find({"user_id": user_id}, {"_id": 0}).to_list(100)
+    badge_ids = [u["badge_id"] for u in ub]
+    badges = await db.badges.find({"id": {"$in": badge_ids}}, {"_id": 0}).to_list(100) if badge_ids else []
+    return badges
+
+@api_router.post("/admin/badges")
+async def admin_create_badge(data: BadgeCreate, user=Depends(require_admin)):
+    doc = {"id": str(uuid.uuid4()), "name": data.name, "description": data.description, "emoji": data.emoji,
+           "condition_type": data.condition_type, "condition_value": data.condition_value, "auto": data.auto,
+           "created_at": datetime.now(timezone.utc).isoformat()}
+    await db.badges.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+@api_router.put("/admin/badges/{badge_id}")
+async def admin_update_badge(badge_id: str, data: BadgeCreate, user=Depends(require_admin)):
+    result = await db.badges.update_one({"id": badge_id}, {"$set": {
+        "name": data.name, "description": data.description, "emoji": data.emoji,
+        "condition_type": data.condition_type, "condition_value": data.condition_value, "auto": data.auto,
+    }})
+    if result.matched_count == 0:
+        raise HTTPException(404, "Badge no encontrado")
+    return {"message": "Badge actualizado"}
+
+@api_router.delete("/admin/badges/{badge_id}")
+async def admin_delete_badge(badge_id: str, user=Depends(require_admin)):
+    await db.badges.delete_one({"id": badge_id})
+    await db.user_badges.delete_many({"badge_id": badge_id})
+    return {"message": "Badge eliminado"}
+
+@api_router.post("/admin/badges/{badge_id}/asignar")
+async def admin_assign_badge(badge_id: str, data: BadgeAssign, user=Depends(require_admin)):
+    badge = await db.badges.find_one({"id": badge_id}, {"_id": 0})
+    if not badge:
+        raise HTTPException(404, "Badge no encontrado")
+    existing = await db.user_badges.find_one({"user_id": data.user_id, "badge_id": badge_id})
+    if existing:
+        raise HTTPException(400, "El usuario ya tiene este badge")
+    await db.user_badges.insert_one({"user_id": data.user_id, "badge_id": badge_id, "badge_name": badge["name"], "awarded_at": datetime.now(timezone.utc).isoformat()})
+    return {"message": "Badge asignado"}
+
+@api_router.post("/admin/badges/{badge_id}/retirar")
+async def admin_remove_badge(badge_id: str, data: BadgeAssign, user=Depends(require_admin)):
+    result = await db.user_badges.delete_one({"user_id": data.user_id, "badge_id": badge_id})
+    if result.deleted_count == 0:
+        raise HTTPException(404, "El usuario no tiene este badge")
+    return {"message": "Badge retirado"}
+
+
+# ADMIN RATINGS MANAGEMENT
+@api_router.get("/admin/valoraciones")
+async def admin_list_ratings(user_id: Optional[str] = None, min_rating: Optional[int] = None, max_rating: Optional[int] = None, user=Depends(require_admin)):
+    q = {}
+    if user_id:
+        q["$or"] = [{"rater_id": user_id}, {"rated_id": user_id}]
+    if min_rating:
+        q["rating"] = q.get("rating", {})
+        q["rating"]["$gte"] = min_rating
+    if max_rating:
+        q.setdefault("rating", {})["$lte"] = max_rating
+    ratings = await db.ratings.find(q, {"_id": 0}).sort("created_at", -1).to_list(200)
+    return ratings
+
+@api_router.delete("/admin/valoraciones/{rating_id}")
+async def admin_delete_rating(rating_id: str, user=Depends(require_admin)):
+    rating = await db.ratings.find_one({"id": rating_id}, {"_id": 0})
+    if not rating:
+        raise HTTPException(404, "Valoracion no encontrada")
+    await db.ratings.delete_one({"id": rating_id})
+    remaining = await db.ratings.find({"rated_id": rating["rated_id"]}, {"_id": 0, "rating": 1}).to_list(1000)
+    if remaining:
+        avg = round(sum(r["rating"] for r in remaining) / len(remaining), 2)
+        await db.users.update_one({"id": rating["rated_id"]}, {"$set": {"rating_avg": avg, "rating_count": len(remaining)}})
+    else:
+        await db.users.update_one({"id": rating["rated_id"]}, {"$set": {"rating_avg": 0, "rating_count": 0}})
+    return {"message": "Valoracion eliminada"}
 
 
 # Include router
@@ -1105,7 +1430,11 @@ async def seed_data():
     ]
     await db.auctions.insert_many(seeds)
     await db.settings.insert_one({"key": "payments_enabled", "value": False})
-    logger.info(f"Seeded {len(seeds)} auctions, 3 users, and settings")
+    for b in DEFAULT_BADGES:
+        b["id"] = str(uuid.uuid4())
+        b["created_at"] = datetime.now(timezone.utc).isoformat()
+    await db.badges.insert_many(DEFAULT_BADGES)
+    logger.info(f"Seeded {len(seeds)} auctions, 3 users, settings, and {len(DEFAULT_BADGES)} badges")
 
 @app.on_event("shutdown")
 async def shutdown():

@@ -2,11 +2,12 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Users, ShoppingCart, Gavel, Trash2, Loader2, Shield, XCircle, CheckCircle, Clock,
-  ArrowLeft, Star, RefreshCw, AlertTriangle, CreditCard, ToggleLeft, ToggleRight, MessageCircle
+  ArrowLeft, Star, RefreshCw, AlertTriangle, CreditCard, ToggleLeft, ToggleRight, MessageCircle, Award, Plus, Edit2
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useAuth } from '@/context/AuthContext';
 import api from '@/lib/api';
@@ -24,6 +25,11 @@ export default function AdminPage() {
   const [deleting, setDeleting] = useState(null);
   const [updatingDispute, setUpdatingDispute] = useState(null);
   const [togglingPayments, setTogglingPayments] = useState(false);
+  const [allBadges, setAllBadges] = useState([]);
+  const [allRatings, setAllRatings] = useState([]);
+  const [badgeForm, setBadgeForm] = useState({ name: '', description: '', emoji: '', condition_type: 'sales', condition_value: 1, auto: true });
+  const [editingBadge, setEditingBadge] = useState(null);
+  const [assignUserId, setAssignUserId] = useState('');
 
   useEffect(() => {
     if (!authLoading && (!user || !user.is_admin)) { navigate('/'); return; }
@@ -33,12 +39,13 @@ export default function AdminPage() {
   const fetchAll = async () => {
     setLoading(true);
     try {
-      const [statsRes, usersRes, auctionsRes, disputesRes, configRes] = await Promise.all([
+      const [statsRes, usersRes, auctionsRes, disputesRes, configRes, badgesRes, ratingsRes] = await Promise.all([
         api.get('/admin/stats'), api.get('/admin/usuarios'), api.get('/admin/subastas'),
-        api.get('/admin/disputas'), api.get('/admin/config'),
+        api.get('/admin/disputas'), api.get('/admin/config'), api.get('/badges'), api.get('/admin/valoraciones'),
       ]);
       setStats(statsRes.data); setUsers(usersRes.data); setAuctions(auctionsRes.data);
       setDisputes(disputesRes.data); setConfig(configRes.data);
+      setAllBadges(badgesRes.data); setAllRatings(ratingsRes.data);
     } catch { toast.error('Error al cargar datos'); }
     finally { setLoading(false); }
   };
@@ -81,6 +88,35 @@ export default function AdminPage() {
 
   if (authLoading || loading) return <div className="min-h-screen bg-[#f5f7fa] flex items-center justify-center"><Loader2 className="w-8 h-8 animate-spin text-[#18b29c]" /></div>;
   if (!user?.is_admin) return null;
+
+  const saveBadge = async () => {
+    try {
+      if (editingBadge) {
+        await api.put(`/admin/badges/${editingBadge}`, badgeForm);
+        toast.success('Badge actualizado');
+      } else {
+        await api.post('/admin/badges', badgeForm);
+        toast.success('Badge creado');
+      }
+      setBadgeForm({ name: '', description: '', emoji: '', condition_type: 'sales', condition_value: 1, auto: true });
+      setEditingBadge(null); fetchAll();
+    } catch (err) { toast.error(err.response?.data?.detail || 'Error'); }
+  };
+  const deleteBadge = async (id) => {
+    if (!window.confirm('Eliminar badge?')) return;
+    try { await api.delete(`/admin/badges/${id}`); toast.success('Badge eliminado'); fetchAll(); } catch { toast.error('Error'); }
+  };
+  const assignBadge = async (badgeId) => {
+    if (!assignUserId) { toast.error('Introduce un User ID'); return; }
+    try { await api.post(`/admin/badges/${badgeId}/asignar`, { user_id: assignUserId }); toast.success('Badge asignado'); setAssignUserId(''); } catch (err) { toast.error(err.response?.data?.detail || 'Error'); }
+  };
+  const removeBadge = async (badgeId, userId) => {
+    try { await api.post(`/admin/badges/${badgeId}/retirar`, { user_id: userId }); toast.success('Badge retirado'); } catch (err) { toast.error(err.response?.data?.detail || 'Error'); }
+  };
+  const deleteRating = async (id) => {
+    if (!window.confirm('Eliminar valoracion?')) return;
+    try { await api.delete(`/admin/valoraciones/${id}`); toast.success('Valoracion eliminada'); fetchAll(); } catch { toast.error('Error'); }
+  };
 
   const statusBadge = (status) => {
     const map = {
@@ -163,13 +199,15 @@ export default function AdminPage() {
         )}
 
         <Tabs defaultValue="users">
-          <TabsList className="w-full grid grid-cols-3 rounded-xl mb-6" data-testid="admin-tabs">
-            <TabsTrigger value="users" className="rounded-lg" data-testid="admin-tab-users"><Users className="w-4 h-4 mr-1" /> Usuarios ({users.length})</TabsTrigger>
-            <TabsTrigger value="auctions" className="rounded-lg" data-testid="admin-tab-auctions"><ShoppingCart className="w-4 h-4 mr-1" /> Subastas ({auctions.length})</TabsTrigger>
-            <TabsTrigger value="disputes" className="rounded-lg relative" data-testid="admin-tab-disputes">
-              <AlertTriangle className="w-4 h-4 mr-1" /> Disputas ({disputes.length})
+          <TabsList className="w-full grid grid-cols-5 rounded-xl mb-6" data-testid="admin-tabs">
+            <TabsTrigger value="users" className="rounded-lg text-xs" data-testid="admin-tab-users"><Users className="w-3.5 h-3.5 mr-0.5" />Usuarios</TabsTrigger>
+            <TabsTrigger value="auctions" className="rounded-lg text-xs" data-testid="admin-tab-auctions"><ShoppingCart className="w-3.5 h-3.5 mr-0.5" />Subastas</TabsTrigger>
+            <TabsTrigger value="disputes" className="rounded-lg text-xs relative" data-testid="admin-tab-disputes">
+              <AlertTriangle className="w-3.5 h-3.5 mr-0.5" />Disputas
               {openDisputes > 0 && <span className="absolute -top-1 -right-1 bg-orange-500 text-white text-[10px] w-4 h-4 rounded-full flex items-center justify-center">{openDisputes}</span>}
             </TabsTrigger>
+            <TabsTrigger value="badges" className="rounded-lg text-xs" data-testid="admin-tab-badges"><Award className="w-3.5 h-3.5 mr-0.5" />Badges</TabsTrigger>
+            <TabsTrigger value="ratings" className="rounded-lg text-xs" data-testid="admin-tab-ratings"><Star className="w-3.5 h-3.5 mr-0.5" />Valoraciones</TabsTrigger>
           </TabsList>
 
           <TabsContent value="users">
@@ -324,6 +362,74 @@ export default function AdminPage() {
                 <AlertTriangle className="w-12 h-12 text-slate-300 mx-auto mb-4" />
                 <p className="text-slate-500">No hay disputas</p>
               </div>
+            )}
+          </TabsContent>
+
+          <TabsContent value="badges">
+            <Card className="border-0 shadow-sm rounded-2xl mb-4">
+              <CardContent className="p-4">
+                <h3 className="font-bold text-sm text-slate-800 mb-3">{editingBadge ? 'Editar Badge' : 'Crear Badge'}</h3>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mb-3">
+                  <Input placeholder="Nombre" value={badgeForm.name} onChange={(e) => setBadgeForm({...badgeForm, name: e.target.value})} className="rounded-lg text-sm" data-testid="badge-name-input" />
+                  <Input placeholder="Emoji" value={badgeForm.emoji} onChange={(e) => setBadgeForm({...badgeForm, emoji: e.target.value})} className="rounded-lg text-sm" data-testid="badge-emoji-input" />
+                  <Input placeholder="Descripcion" value={badgeForm.description} onChange={(e) => setBadgeForm({...badgeForm, description: e.target.value})} className="rounded-lg text-sm col-span-2 sm:col-span-1" data-testid="badge-desc-input" />
+                  <select value={badgeForm.condition_type} onChange={(e) => setBadgeForm({...badgeForm, condition_type: e.target.value})} className="rounded-lg border p-2 text-sm" data-testid="badge-condition-select">
+                    <option value="sales">Ventas</option><option value="purchases">Compras</option><option value="positive_ratings">Ratings positivos</option>
+                    <option value="canarias_sales">Ventas Canarias</option><option value="bids_received">Pujas recibidas</option><option value="positive_pct">% positivas</option>
+                  </select>
+                  <Input type="number" placeholder="Valor" value={badgeForm.condition_value} onChange={(e) => setBadgeForm({...badgeForm, condition_value: parseInt(e.target.value) || 0})} className="rounded-lg text-sm" data-testid="badge-value-input" />
+                  <label className="flex items-center gap-2 text-sm text-slate-600"><input type="checkbox" checked={badgeForm.auto} onChange={(e) => setBadgeForm({...badgeForm, auto: e.target.checked})} /> Auto</label>
+                </div>
+                <div className="flex gap-2">
+                  <Button onClick={saveBadge} className="bg-[#18b29c] text-white rounded-full text-xs" data-testid="badge-save-btn"><Plus className="w-3 h-3 mr-1" />{editingBadge ? 'Actualizar' : 'Crear'}</Button>
+                  {editingBadge && <Button variant="outline" onClick={() => { setEditingBadge(null); setBadgeForm({ name: '', description: '', emoji: '', condition_type: 'sales', condition_value: 1, auto: true }); }} className="rounded-full text-xs">Cancelar</Button>}
+                </div>
+              </CardContent>
+            </Card>
+            <div className="space-y-2">
+              {allBadges.map(b => (
+                <Card key={b.id} className="border-0 shadow-sm rounded-xl" data-testid={`admin-badge-${b.id}`}>
+                  <CardContent className="p-3 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xl">{b.emoji}</span>
+                      <div>
+                        <p className="font-bold text-sm text-slate-800">{b.name}</p>
+                        <p className="text-xs text-slate-500">{b.description} | {b.condition_type}: {b.condition_value} | {b.auto ? 'Auto' : 'Manual'}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <Input placeholder="User ID" value={assignUserId} onChange={(e) => setAssignUserId(e.target.value)} className="rounded-lg text-xs w-24 h-7" />
+                      <Button size="sm" variant="outline" onClick={() => assignBadge(b.id)} className="rounded-full text-xs h-7" data-testid={`assign-badge-${b.id}`}>Asignar</Button>
+                      <Button size="sm" variant="ghost" onClick={() => { setEditingBadge(b.id); setBadgeForm({ name: b.name, description: b.description, emoji: b.emoji, condition_type: b.condition_type, condition_value: b.condition_value, auto: b.auto }); }} className="text-slate-500 h-7"><Edit2 className="w-3 h-3" /></Button>
+                      <Button size="sm" variant="ghost" onClick={() => deleteBadge(b.id)} className="text-red-500 h-7"><Trash2 className="w-3 h-3" /></Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          </TabsContent>
+
+          <TabsContent value="ratings">
+            {allRatings.length > 0 ? (
+              <div className="space-y-2">
+                {allRatings.map(r => (
+                  <Card key={r.id} className="border-0 shadow-sm rounded-xl" data-testid={`admin-rating-${r.id}`}>
+                    <CardContent className="p-3 flex items-center justify-between">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <div className="flex">{[1,2,3,4,5].map(s => <Star key={s} className={`w-3 h-3 ${s <= r.rating ? 'text-[#ffb347] fill-[#ffb347]' : 'text-slate-300'}`} />)}</div>
+                          <span className="text-xs text-slate-500">{new Date(r.created_at).toLocaleDateString('es-ES')}</span>
+                        </div>
+                        <p className="text-xs text-slate-600 mt-0.5"><span className="font-medium">{r.rater_name}</span> &rarr; <span className="font-medium">{r.rated_id}</span></p>
+                        {r.comment && <p className="text-xs text-slate-500 italic mt-0.5">"{r.comment}"</p>}
+                      </div>
+                      <Button size="sm" variant="ghost" onClick={() => deleteRating(r.id)} className="text-red-500 flex-shrink-0"><Trash2 className="w-3.5 h-3.5" /></Button>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-16"><Star className="w-12 h-12 text-slate-300 mx-auto mb-4" /><p className="text-slate-500">No hay valoraciones</p></div>
             )}
           </TabsContent>
         </Tabs>
