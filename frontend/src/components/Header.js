@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Menu, X, User, LogOut, Plus, Bell } from 'lucide-react';
+import { Menu, X, User, LogOut, Plus, Bell, Shield } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/context/AuthContext';
 import api from '@/lib/api';
@@ -111,6 +111,11 @@ export function Header() {
                     <DropdownMenuItem onClick={() => navigate('/perfil')} data-testid="menu-profile" className="cursor-pointer">
                       <User className="w-4 h-4 mr-2" /> Mi Perfil
                     </DropdownMenuItem>
+                    {user.is_admin && (
+                      <DropdownMenuItem onClick={() => navigate('/admin')} data-testid="menu-admin" className="cursor-pointer">
+                        <Shield className="w-4 h-4 mr-2" /> Admin Panel
+                      </DropdownMenuItem>
+                    )}
                     <DropdownMenuItem onClick={() => { logout(); navigate('/'); }} data-testid="menu-logout" className="cursor-pointer">
                       <LogOut className="w-4 h-4 mr-2" /> Cerrar Sesion
                     </DropdownMenuItem>

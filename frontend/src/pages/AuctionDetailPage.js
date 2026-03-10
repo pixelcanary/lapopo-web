@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { ArrowLeft, MapPin, User, Gavel, Hand, Package, Loader2, Tag, ShoppingCart, XCircle, Zap, Send, Mail } from 'lucide-react';
+import { ArrowLeft, MapPin, User, Gavel, Hand, Package, Loader2, Tag, ShoppingCart, XCircle, Zap, Send, Mail, Star } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import { Countdown } from '@/components/Countdown';
+import { StarRating } from '@/components/StarRating';
 import { useAuth } from '@/context/AuthContext';
 import api, { isCanarias } from '@/lib/api';
 import { toast } from 'sonner';
@@ -35,6 +36,10 @@ export default function AuctionDetailPage() {
   const [cancelling, setCancelling] = useState(false);
   const [buyingNow, setBuyingNow] = useState(false);
   const [bidInit, setBidInit] = useState(false);
+  const [myRating, setMyRating] = useState(0);
+  const [ratingComment, setRatingComment] = useState('');
+  const [submittingRating, setSubmittingRating] = useState(false);
+  const [auctionRatings, setAuctionRatings] = useState(null);
 
   const fetchAuction = useCallback(async () => {
     try {
@@ -116,6 +121,33 @@ export default function AuctionDetailPage() {
     } catch (err) { toast.error('Error al enviar'); }
     finally { setSendingMsg(false); }
   };
+
+  const fetchAuctionRatings = async () => {
+    try {
+      const res = await api.get(`/valoraciones/subasta/${id}`);
+      setAuctionRatings(res.data);
+    } catch { /* ignore */ }
+  };
+
+  const submitRating = async () => {
+    if (!myRating || myRating < 1) { toast.error('Selecciona una puntuacion'); return; }
+    const ratedUserId = isOwner ? auction.winner_id : auction.seller_id;
+    if (!ratedUserId) return;
+    setSubmittingRating(true);
+    try {
+      await api.post('/valoraciones', { auction_id: id, rated_user_id: ratedUserId, rating: myRating, comment: ratingComment || null });
+      toast.success('Valoracion enviada');
+      fetchAuctionRatings();
+    } catch (err) { toast.error(err.response?.data?.detail || 'Error al valorar'); }
+    finally { setSubmittingRating(false); }
+  };
+
+  useEffect(() => {
+    if (auction?.status === 'finished' && user && (user.id === auction.seller_id || user.id === auction.winner_id)) {
+      fetchAuctionRatings();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [auction?.status, auction?.id, user]);
 
   if (loading) return <div className="min-h-screen bg-[#f5f7fa] flex items-center justify-center"><Loader2 className="w-8 h-8 animate-spin text-[#18b29c]" /></div>;
   if (!auction) return null;
@@ -206,6 +238,48 @@ export default function AuctionDetailPage() {
                         {sendingMsg ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
                       </Button>
                     </div>
+                  </div>
+                )}
+              </CardContent></Card>
+            )}
+
+            {/* Rating section for finished auctions */}
+            {isFinished && (isOwner || isWinner) && auction.winner_id && (
+              <Card className="mt-4 border-0 shadow-sm rounded-2xl" data-testid="rating-section"><CardContent className="p-6">
+                <h2 className="font-bold text-lg text-slate-800 mb-3">
+                  <Star className="w-5 h-5 inline mr-1 text-[#ffb347]" />
+                  Valoracion
+                </h2>
+                {auctionRatings && auctionRatings.my_ratings?.length > 0 ? (
+                  <div className="bg-[#18b29c]/10 rounded-xl p-4" data-testid="rating-submitted">
+                    <p className="text-sm font-medium text-[#18b29c] mb-1">Ya has valorado esta transaccion</p>
+                    <StarRating rating={auctionRatings.my_ratings[0].rating} count={0} showCount={false} size="md" />
+                    {auctionRatings.my_ratings[0].comment && (
+                      <p className="text-sm text-slate-600 mt-2 italic">"{auctionRatings.my_ratings[0].comment}"</p>
+                    )}
+                  </div>
+                ) : (
+                  <div className="space-y-3" data-testid="rating-form">
+                    <p className="text-sm text-slate-600">
+                      {isOwner ? `Valora al comprador (${auction.winner_name})` : `Valora al vendedor (${auction.seller_name})`}
+                    </p>
+                    <StarRating rating={myRating} interactive onRate={setMyRating} showCount={false} size="lg" />
+                    <Textarea
+                      value={ratingComment}
+                      onChange={(e) => setRatingComment(e.target.value)}
+                      placeholder="Comentario opcional..."
+                      className="rounded-xl min-h-[60px]"
+                      data-testid="rating-comment-input"
+                    />
+                    <Button
+                      onClick={submitRating}
+                      disabled={submittingRating || !myRating}
+                      className="bg-[#ffb347] hover:bg-[#ffa01a] text-white rounded-full w-full"
+                      data-testid="submit-rating-btn"
+                    >
+                      {submittingRating ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Star className="w-4 h-4 mr-1" />}
+                      Enviar valoracion
+                    </Button>
                   </div>
                 )}
               </CardContent></Card>
@@ -324,6 +398,12 @@ export default function AuctionDetailPage() {
               <Separator className="my-4" />
               <div className="space-y-3 text-sm">
                 <div className="flex items-center gap-2 text-slate-600"><User className="w-4 h-4 text-slate-400" />Vendedor: <span className="font-medium">{auction.seller_name}</span></div>
+                {(auction.seller_rating_count > 0) && (
+                  <div className="flex items-center gap-2 text-slate-600" data-testid="detail-seller-rating">
+                    <Star className="w-4 h-4 text-[#ffb347]" />
+                    <StarRating rating={auction.seller_rating_avg} count={auction.seller_rating_count} size="xs" />
+                  </div>
+                )}
                 <div className="flex items-center gap-2 text-slate-600"><MapPin className="w-4 h-4 text-slate-400" />{auction.location}</div>
                 <div className="flex items-center gap-2 text-slate-600"><Package className="w-4 h-4 text-slate-400" />{DELIVERY_LABELS[auction.delivery_type] || auction.delivery_type}</div>
               </div>

@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { MapPin, Gavel, Hand, Heart, ShoppingCart } from 'lucide-react';
+import { MapPin, Gavel, Hand, Heart, ShoppingCart, Star } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Countdown } from './Countdown';
 import { isCanarias } from '@/lib/api';
@@ -92,6 +92,12 @@ export function AuctionCard({ auction, initialFavorited = false }) {
         <div className="flex items-center gap-1 mt-2 text-xs text-slate-500">
           <MapPin className="w-3 h-3" />
           {auction.location}
+          {auction.seller_rating_count > 0 && (
+            <span className="ml-auto flex items-center gap-0.5" data-testid={`seller-rating-${auction.id}`}>
+              <Star className="w-3 h-3 text-[#ffb347] fill-[#ffb347]" />
+              <span>{auction.seller_rating_avg?.toFixed(1)}</span>
+            </span>
+          )}
         </div>
       </div>
     </Link>

@@ -73,13 +73,20 @@ class MessageCreate(BaseModel):
     auction_id: str
     content: str
 
+class RatingCreate(BaseModel):
+    auction_id: str
+    rated_user_id: str
+    rating: int
+    comment: Optional[str] = None
+
 
 # Auth helpers
-def create_token(user_id: str, name: str, email: str):
+def create_token(user_id: str, name: str, email: str, is_admin: bool = False):
     payload = {
         "user_id": user_id,
         "name": name,
         "email": email,
+        "is_admin": is_admin,
         "exp": datetime.now(timezone.utc) + timedelta(hours=24)
     }
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
@@ -96,6 +103,14 @@ async def get_current_user(authorization: str = Header(None)):
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="No autorizado")
     return verify_token(authorization.split(" ")[1])
+
+async def require_admin(authorization: str = Header(None)):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="No autorizado")
+    user = verify_token(authorization.split(" ")[1])
+    if not user.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Solo administradores")
+    return user
 
 async def close_expired():
     now = datetime.now(timezone.utc).isoformat()
@@ -179,6 +194,19 @@ async def process_auto_bids(auction_id, exclude_user_id):
         await db.auto_bids.update_one({"id": best["id"]}, {"$set": {"active": False}})
 
 
+async def enrich_with_ratings(auctions):
+    seller_ids = list(set(a["seller_id"] for a in auctions))
+    if not seller_ids:
+        return auctions
+    users = await db.users.find({"id": {"$in": seller_ids}}, {"_id": 0, "id": 1, "rating_avg": 1, "rating_count": 1}).to_list(len(seller_ids))
+    rating_map = {u["id"]: (u.get("rating_avg", 0), u.get("rating_count", 0)) for u in users}
+    for a in auctions:
+        avg, count = rating_map.get(a["seller_id"], (0, 0))
+        a["seller_rating_avg"] = avg
+        a["seller_rating_count"] = count
+    return auctions
+
+
 # AUTH ENDPOINTS
 @api_router.post("/auth/register")
 async def register(data: UserRegister):
@@ -193,16 +221,17 @@ async def register(data: UserRegister):
         "created_at": datetime.now(timezone.utc).isoformat()
     }
     await db.users.insert_one(doc)
-    token = create_token(uid, data.name, data.email)
-    return {"token": token, "user": {"id": uid, "name": data.name, "email": data.email}}
+    token = create_token(uid, data.name, data.email, False)
+    return {"token": token, "user": {"id": uid, "name": data.name, "email": data.email, "is_admin": False}}
 
 @api_router.post("/auth/login")
 async def login(data: UserLogin):
     user = await db.users.find_one({"email": data.email}, {"_id": 0})
     if not user or not pwd_context.verify(data.password, user["password_hash"]):
         raise HTTPException(401, "Credenciales incorrectas")
-    token = create_token(user["id"], user["name"], user["email"])
-    return {"token": token, "user": {"id": user["id"], "name": user["name"], "email": user["email"]}}
+    is_admin = user.get("is_admin", False)
+    token = create_token(user["id"], user["name"], user["email"], is_admin)
+    return {"token": token, "user": {"id": user["id"], "name": user["name"], "email": user["email"], "is_admin": is_admin}}
 
 
 # AUCTION ENDPOINTS
@@ -249,7 +278,7 @@ async def list_auctions(
     elif sort == "most_bids":
         sort_field = [("bid_count", -1)]
 
-    return await db.auctions.find(q, {"_id": 0}).sort(sort_field).to_list(100)
+    return await enrich_with_ratings(await db.auctions.find(q, {"_id": 0}).sort(sort_field).to_list(100))
 
 @api_router.get("/subastas/{auction_id}")
 async def get_auction(auction_id: str):
@@ -257,6 +286,9 @@ async def get_auction(auction_id: str):
     auction = await db.auctions.find_one({"id": auction_id}, {"_id": 0})
     if not auction:
         raise HTTPException(404, "Subasta no encontrada")
+    seller = await db.users.find_one({"id": auction["seller_id"]}, {"_id": 0, "rating_avg": 1, "rating_count": 1})
+    auction["seller_rating_avg"] = seller.get("rating_avg", 0) if seller else 0
+    auction["seller_rating_count"] = seller.get("rating_count", 0) if seller else 0
     return auction
 
 @api_router.post("/subastas")
@@ -347,7 +379,17 @@ async def get_user_profile(user_id: str):
     favs = await db.favorites.find({"user_id": user_id}, {"_id": 0}).to_list(100)
     fav_ids = [f["auction_id"] for f in favs]
     fav_auctions = await db.auctions.find({"id": {"$in": fav_ids}}, {"_id": 0}).to_list(100) if fav_ids else []
-    return {"user": user, "auctions": auctions, "active_bids": active_bids, "won_auctions": won_auctions, "favorites": fav_auctions}
+    ratings = await db.ratings.find({"rated_id": user_id}, {"_id": 0}).sort("created_at", -1).to_list(100)
+    return {
+        "user": user,
+        "auctions": auctions,
+        "active_bids": active_bids,
+        "won_auctions": won_auctions,
+        "favorites": fav_auctions,
+        "ratings": ratings,
+        "rating_avg": user.get("rating_avg", 0),
+        "rating_count": user.get("rating_count", 0),
+    }
 
 @api_router.put("/usuarios/{user_id}")
 async def update_user(user_id: str, data: UserUpdate, user=Depends(get_current_user)):
@@ -548,6 +590,121 @@ async def get_locations():
     return {"peninsula": ["Madrid", "Barcelona", "Valencia", "Sevilla", "Málaga", "Bilbao", "Zaragoza", "Alicante", "Murcia", "Córdoba"], "canarias": CANARY_ISLANDS}
 
 
+# RATINGS
+@api_router.post("/valoraciones")
+async def create_rating(data: RatingCreate, user=Depends(get_current_user)):
+    if data.rating < 1 or data.rating > 5:
+        raise HTTPException(400, "La valoracion debe ser entre 1 y 5")
+    auction = await db.auctions.find_one({"id": data.auction_id}, {"_id": 0})
+    if not auction:
+        raise HTTPException(404, "Subasta no encontrada")
+    if auction["status"] != "finished":
+        raise HTTPException(400, "La subasta no ha terminado")
+    uid = user["user_id"]
+    is_seller = uid == auction["seller_id"]
+    is_winner = uid == auction.get("winner_id")
+    if not is_seller and not is_winner:
+        raise HTTPException(403, "Solo el comprador o vendedor pueden valorar")
+    if uid == data.rated_user_id:
+        raise HTTPException(400, "No puedes valorarte a ti mismo")
+    if is_seller and data.rated_user_id != auction.get("winner_id"):
+        raise HTTPException(400, "Solo puedes valorar al ganador")
+    if is_winner and data.rated_user_id != auction["seller_id"]:
+        raise HTTPException(400, "Solo puedes valorar al vendedor")
+    existing = await db.ratings.find_one({"auction_id": data.auction_id, "rater_id": uid, "rated_id": data.rated_user_id})
+    if existing:
+        raise HTTPException(400, "Ya has valorado a este usuario en esta subasta")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "auction_id": data.auction_id,
+        "rater_id": uid,
+        "rater_name": user["name"],
+        "rated_id": data.rated_user_id,
+        "rating": data.rating,
+        "comment": data.comment or "",
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    await db.ratings.insert_one(doc)
+    all_ratings = await db.ratings.find({"rated_id": data.rated_user_id}, {"_id": 0, "rating": 1}).to_list(1000)
+    avg = round(sum(r["rating"] for r in all_ratings) / len(all_ratings), 2)
+    await db.users.update_one({"id": data.rated_user_id}, {"$set": {"rating_avg": avg, "rating_count": len(all_ratings)}})
+    doc.pop("_id", None)
+    return doc
+
+@api_router.get("/valoraciones/usuario/{user_id}")
+async def get_user_ratings(user_id: str):
+    ratings = await db.ratings.find({"rated_id": user_id}, {"_id": 0}).sort("created_at", -1).to_list(100)
+    u = await db.users.find_one({"id": user_id}, {"_id": 0, "rating_avg": 1, "rating_count": 1})
+    return {"ratings": ratings, "average": u.get("rating_avg", 0) if u else 0, "count": u.get("rating_count", 0) if u else 0}
+
+@api_router.get("/valoraciones/subasta/{auction_id}")
+async def get_auction_ratings(auction_id: str, user=Depends(get_current_user)):
+    ratings = await db.ratings.find({"auction_id": auction_id}, {"_id": 0}).to_list(10)
+    my_ratings = [r for r in ratings if r["rater_id"] == user["user_id"]]
+    return {"ratings": ratings, "my_ratings": my_ratings}
+
+
+# ADMIN
+@api_router.get("/admin/stats")
+async def admin_stats(user=Depends(require_admin)):
+    total_users = await db.users.count_documents({})
+    active_auctions = await db.auctions.count_documents({"status": "active"})
+    finished_auctions = await db.auctions.count_documents({"status": "finished"})
+    cancelled_auctions = await db.auctions.count_documents({"status": "cancelled"})
+    pipeline = [{"$group": {"_id": None, "total_bids": {"$sum": "$bid_count"}}}]
+    agg = await db.auctions.aggregate(pipeline).to_list(1)
+    total_bids = agg[0]["total_bids"] if agg else 0
+    total_ratings = await db.ratings.count_documents({})
+    return {
+        "total_users": total_users,
+        "active_auctions": active_auctions,
+        "finished_auctions": finished_auctions,
+        "cancelled_auctions": cancelled_auctions,
+        "total_bids": total_bids,
+        "total_ratings": total_ratings,
+    }
+
+@api_router.get("/admin/usuarios")
+async def admin_list_users(user=Depends(require_admin)):
+    users = await db.users.find({}, {"_id": 0, "password_hash": 0}).sort("created_at", -1).to_list(500)
+    for u in users:
+        u["auction_count"] = await db.auctions.count_documents({"seller_id": u["id"]})
+    return users
+
+@api_router.get("/admin/subastas")
+async def admin_list_auctions(status: Optional[str] = None, user=Depends(require_admin)):
+    q = {}
+    if status:
+        q["status"] = status
+    auctions = await db.auctions.find(q, {"_id": 0}).sort("created_at", -1).to_list(500)
+    return auctions
+
+@api_router.delete("/admin/usuarios/{user_id}")
+async def admin_delete_user(user_id: str, user=Depends(require_admin)):
+    target = await db.users.find_one({"id": user_id}, {"_id": 0})
+    if not target:
+        raise HTTPException(404, "Usuario no encontrado")
+    if target.get("is_admin"):
+        raise HTTPException(400, "No se puede eliminar un administrador")
+    await db.users.delete_one({"id": user_id})
+    await db.auctions.update_many({"seller_id": user_id, "status": "active"}, {"$set": {"status": "cancelled"}})
+    await db.favorites.delete_many({"user_id": user_id})
+    await db.notifications.delete_many({"user_id": user_id})
+    await db.auto_bids.delete_many({"user_id": user_id})
+    return {"message": "Usuario eliminado"}
+
+@api_router.delete("/admin/subastas/{auction_id}")
+async def admin_delete_auction(auction_id: str, user=Depends(require_admin)):
+    auction = await db.auctions.find_one({"id": auction_id}, {"_id": 0})
+    if not auction:
+        raise HTTPException(404, "Subasta no encontrada")
+    await db.auctions.delete_one({"id": auction_id})
+    await db.favorites.delete_many({"auction_id": auction_id})
+    await db.auto_bids.delete_many({"auction_id": auction_id})
+    await db.ratings.delete_many({"auction_id": auction_id})
+    return {"message": "Subasta eliminada"}
+
+
 # Include router
 app.include_router(api_router)
 
@@ -573,9 +730,11 @@ async def seed_data():
 
     demo_id = str(uuid.uuid4())
     maria_id = str(uuid.uuid4())
+    admin_id = str(uuid.uuid4())
     await db.users.insert_many([
-        {"id": demo_id, "name": "Carlos López", "email": "carlos@lapopo.es", "password_hash": pwd_context.hash("demo123"), "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": maria_id, "name": "María García", "email": "maria@lapopo.es", "password_hash": pwd_context.hash("demo123"), "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id": demo_id, "name": "Carlos López", "email": "carlos@lapopo.es", "password_hash": pwd_context.hash("demo123"), "is_admin": False, "rating_avg": 0, "rating_count": 0, "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id": maria_id, "name": "María García", "email": "maria@lapopo.es", "password_hash": pwd_context.hash("demo123"), "is_admin": False, "rating_avg": 0, "rating_count": 0, "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id": admin_id, "name": "Admin Lapopo", "email": "admin@lapopo.es", "password_hash": pwd_context.hash("admin123"), "is_admin": True, "rating_avg": 0, "rating_count": 0, "created_at": datetime.now(timezone.utc).isoformat()},
     ])
 
     now = datetime.now(timezone.utc)

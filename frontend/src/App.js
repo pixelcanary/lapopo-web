@@ -8,6 +8,7 @@ import AuthPage from '@/pages/AuthPage';
 import CreateAuctionPage from '@/pages/CreateAuctionPage';
 import AuctionDetailPage from '@/pages/AuctionDetailPage';
 import ProfilePage from '@/pages/ProfilePage';
+import AdminPage from '@/pages/AdminPage';
 import '@/App.css';
 
 function App() {
@@ -22,6 +23,7 @@ function App() {
             <Route path="/vender" element={<CreateAuctionPage />} />
             <Route path="/subasta/:id" element={<AuctionDetailPage />} />
             <Route path="/perfil" element={<ProfilePage />} />
+            <Route path="/admin" element={<AdminPage />} />
           </Routes>
           <MobileNav />
           <Toaster position="top-center" richColors />
