@@ -1,62 +1,91 @@
-# Lapopo - PRD (Product Requirements Document)
+# Lapopo - Plataforma de Subastas de Segunda Mano
 
 ## Problem Statement
-Plataforma de subastas de segunda mano enfocada en España y Canarias, similar a Wallapop pero con subastas desde 1€.
+Build a full-stack auction web application called "Lapopo", a second-hand auction platform for Spain and the Canary Islands, similar to Wallapop but with auctions starting from 1 euro.
 
-## Architecture
-- **Frontend**: React + Tailwind CSS + Shadcn UI
-- **Backend**: FastAPI (Python)
-- **Database**: MongoDB (Motor async driver)
-- **Auth**: JWT (PyJWT + bcrypt/passlib)
-- **Images**: Base64 encoded in MongoDB
+## Tech Stack
+- **Frontend:** React, TailwindCSS, Shadcn UI
+- **Backend:** FastAPI (Python)
+- **Database:** MongoDB
+- **Auth:** JWT
 
-## User Personas
-1. **Vendedor**: Usuario que publica artículos en subasta
-2. **Comprador**: Usuario que busca y puja por artículos
-3. **Canarias Local**: Usuario en las Islas Canarias, prefiere recogida en mano
+## Design
+- Colors: #18b29c (primary), #ffb347 (accent), #f5f7fa (background)
+- Font: Nunito (headings), system-ui
+- Clean/modern style with rounded cards
 
-## Core Requirements
-- JWT auth (registro/login con email y contraseña)
-- CRUD de subastas con fotos (base64)
-- Sistema de pujas con validación (mín. precio actual + 0.50€)
-- Filtros: categoría, ubicación, Solo Canarias, búsqueda
-- Contador regresivo en tiempo real
-- Auto-cierre de subastas expiradas
-- UI en español, mobile-first, responsive
+## Pages
+- Home (hero, search, filters, auction grid, Canarias section, FAQ, footer)
+- Auth (login/register)
+- Create Auction (3-step wizard)
+- Auction Detail (images, bidding, buy now, auto-bid, cancel, contact, messages)
+- Profile (tabs: subastas, pujas, ganadas, favoritos, avisos)
 
-## What's Been Implemented (2026-03-10)
-- ✅ Backend completo: 17 endpoints API
-- ✅ Auth JWT (registro, login)
-- ✅ CRUD subastas con filtros
-- ✅ Sistema de pujas con validación
-- ✅ Seed data (12 subastas demo, 2 usuarios demo)
-- ✅ Frontend: 5 páginas (Home, Auth, CreateAuction, AuctionDetail, Profile)
-- ✅ Componentes: Header, MobileNav, AuctionCard, Countdown
-- ✅ Diseño: colores Lapopo (#18b29c, #ffb347), Nunito font, rounded cards, pill buttons
-- ✅ Solo Canarias section con badge
-- ✅ FAQ con accordion
-- ✅ Sell in 3 steps section
-- ✅ Profile con edición y tabs (mis subastas, mis pujas)
-- ✅ 100% tests backend, 95% frontend, 100% mobile
+## Core Features - ALL IMPLEMENTED
+1. User registration/login (JWT)
+2. Auction CRUD with image upload (base64 compressed)
+3. Manual bidding (min +0.50 euro)
+4. Real-time countdown
+5. Auction filtering (category, location, canarias, search, price, sort)
+6. Buy It Now (optional instant purchase price)
+7. Auction cancellation (with bid/time rules)
+8. Seller-Winner contact system
+9. Notifications (outbid, won, cancelled, messages)
+10. Basic messaging between seller/winner
+11. Favorites/Watchlist
+12. Automatic bidding system
 
-## Prioritized Backlog
-### P0 (Critical - Done)
-- [x] Auth, subastas CRUD, pujas, seed data, UI completa
+## Key API Endpoints
+- `/api/auth/register`, `/api/auth/login`
+- `/api/subastas` (GET, POST)
+- `/api/subastas/{id}` (GET)
+- `/api/subastas/{id}/pujar` (POST)
+- `/api/subastas/{id}/comprar-ya` (POST)
+- `/api/subastas/{id}/cancelar` (POST)
+- `/api/subastas/{id}/auto-pujar` (POST)
+- `/api/notificaciones` (GET)
+- `/api/notificaciones/{id}/leer` (PUT)
+- `/api/notificaciones/leer-todas` (PUT)
+- `/api/mensajes` (POST), `/api/mensajes/{auction_id}` (GET)
+- `/api/favoritos/{auction_id}` (POST toggle), `/api/favoritos` (GET)
+- `/api/contacto/{auction_id}` (GET)
+- `/api/usuarios/{id}` (GET, PUT)
+- `/api/categorias`, `/api/ubicaciones`
 
-### P1 (Important)
-- [ ] Sistema de notificaciones (subasta ganada, superado en puja)
-- [ ] Sistema de mensajería vendedor-comprador
-- [ ] Favoritos / watchlist de subastas
+## DB Collections
+- `users`: id, name, email, password_hash, created_at
+- `auctions`: id, title, description, images, starting_price, current_price, buy_now_price, duration, end_time, category, location, delivery_type, seller_id, seller_name, bids[], bid_count, status, winner_id, winner_name, created_at
+- `notifications`: id, user_id, type, auction_id, auction_title, message, read, created_at
+- `messages`: id, auction_id, sender_id, sender_name, receiver_id, content, created_at
+- `favorites`: user_id, auction_id, created_at
+- `auto_bids`: id, auction_id, user_id, user_name, max_amount, active, created_at
 
-### P2 (Nice to have)
-- [ ] WebSockets para pujas en tiempo real
-- [ ] Sistema de valoraciones vendedor/comprador
-- [ ] Galería de fotos con zoom
-- [ ] Compartir subasta en redes sociales
-- [ ] Historial de subastas ganadas/compradas
+## Test Credentials
+- carlos@lapopo.es / demo123 (Carlos Lopez)
+- maria@lapopo.es / demo123 (Maria Garcia)
 
-## Next Tasks
-1. Notificaciones cuando una subasta termina
-2. Mensajería entre comprador y vendedor
-3. Favoritos/watchlist
-4. WebSockets para actualización instantánea de pujas
+## Testing
+- Backend: 33/33 tests passing (pytest at /app/backend/tests/test_lapopo_api.py)
+- Frontend: 14/14 features verified via E2E testing
+- Test report: /app/test_reports/iteration_2.json
+
+## Completed - March 2026
+- [x] MVP (auth, CRUD, bidding, countdown, filters)
+- [x] Bug fixes (price input, footer 2026, seed data cleanup)
+- [x] Buy It Now feature
+- [x] Auction cancellation with rules
+- [x] Seller-Winner contact system
+- [x] Notification system (outbid, won, cancelled, messages)
+- [x] Basic messaging
+- [x] Favorites/Watchlist
+- [x] Automatic bidding system
+- [x] Comprehensive E2E testing (100% pass rate)
+
+## Future/Backlog
+- P1: Image upload to cloud storage (currently base64)
+- P1: Ratings/reviews for sellers
+- P2: Payment integration (Stripe)
+- P2: Push notifications (web)
+- P2: Search autocomplete
+- P3: Admin panel
+- P3: Backend route modularization
