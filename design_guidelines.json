@@ -1,0 +1,148 @@
+{
+  "project_name": "Lapopo",
+  "design_philosophy": {
+    "identity": "Community-focused, vibrant, and trustworthy second-hand auction platform for Spain & Canary Islands.",
+    "core_principles": [
+      "Mobile-First: Design for the thumb zone first.",
+      "Clarity: Auctions move fast; information (price, time) must be instant.",
+      "Trust: Clean UI, verified badges, transparent history.",
+      "Vibrancy: Use the requested Teal/Orange to create energy, but keep the structural UI clean (White/Gray)."
+    ],
+    "emotional_tone": "Exciting (Auctions), Friendly (Community), Reliable (Transaction)."
+  },
+  "typography": {
+    "font_family": {
+      "headings": "Nunito, sans-serif",
+      "body": "Inter, system-ui, sans-serif",
+      "mono": "JetBrains Mono, monospace"
+    },
+    "scale": {
+      "h1": "text-4xl md:text-5xl font-extrabold tracking-tight",
+      "h2": "text-3xl md:text-4xl font-bold tracking-tight",
+      "h3": "text-2xl font-bold",
+      "body_lg": "text-lg leading-relaxed",
+      "body_base": "text-base leading-relaxed text-slate-600",
+      "caption": "text-sm text-slate-500",
+      "micro": "text-xs font-medium uppercase tracking-wider"
+    },
+    "usage_rules": "Use Nunito for all Headings and Price displays (to make numbers look friendly). Use Inter for descriptions, forms, and metadata."
+  },
+  "colors": {
+    "palette": {
+      "primary": {
+        "DEFAULT": "#18b29c",
+        "foreground": "#ffffff",
+        "hover": "#149682",
+        "light": "#e0f7f4"
+      },
+      "secondary": {
+        "DEFAULT": "#ffb347",
+        "foreground": "#ffffff",
+        "hover": "#ffa01a",
+        "light": "#fff5e6"
+      },
+      "background": {
+        "DEFAULT": "#f5f7fa",
+        "paper": "#ffffff",
+        "subtle": "#f0f2f5"
+      },
+      "text": {
+        "primary": "#0f172a",
+        "secondary": "#475569",
+        "muted": "#94a3b8"
+      },
+      "status": {
+        "success": "#22c55e",
+        "error": "#ef4444",
+        "warning": "#f59e0b",
+        "info": "#3b82f6"
+      }
+    },
+    "gradients": {
+      "primary": "bg-gradient-to-r from-[#18b29c] to-[#1cd1b6]",
+      "warm": "bg-gradient-to-r from-[#ffb347] to-[#ffcb80]"
+    }
+  },
+  "spacing_and_layout": {
+    "container": "container mx-auto px-4 md:px-6 max-w-7xl",
+    "section_spacing": "py-12 md:py-20",
+    "grid_system": {
+      "mobile": "grid-cols-1 gap-4",
+      "tablet": "md:grid-cols-2 md:gap-6",
+      "desktop": "lg:grid-cols-3 xl:grid-cols-4 gap-8",
+      "bento": "grid grid-cols-1 md:grid-cols-4 gap-4 auto-rows-[200px]"
+    },
+    "border_radius": {
+      "card": "rounded-2xl",
+      "button": "rounded-full",
+      "input": "rounded-xl"
+    }
+  },
+  "components": {
+    "buttons": {
+      "primary": "bg-[#18b29c] hover:bg-[#149682] text-white rounded-full px-8 py-3 font-bold transition-all shadow-lg hover:shadow-xl hover:-translate-y-0.5 active:scale-95",
+      "secondary": "bg-[#ffb347] hover:bg-[#ffa01a] text-white rounded-full px-8 py-3 font-bold transition-all shadow-md hover:shadow-lg",
+      "outline": "border-2 border-[#18b29c] text-[#18b29c] hover:bg-[#18b29c]/10 rounded-full px-8 py-3 font-bold transition-colors",
+      "ghost": "text-slate-600 hover:text-[#18b29c] hover:bg-slate-100 rounded-full px-4 py-2 font-medium"
+    },
+    "cards": {
+      "auction": "bg-white rounded-2xl shadow-sm hover:shadow-md transition-all border border-slate-100 overflow-hidden group relative",
+      "feature": "bg-white rounded-3xl p-8 shadow-sm border border-slate-100 flex flex-col items-center text-center",
+      "glass": "bg-white/80 backdrop-blur-md border border-white/20 shadow-lg rounded-2xl"
+    },
+    "badges": {
+      "canarias": "bg-[#ffb347]/10 text-[#ffb347] border border-[#ffb347]/20 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider flex items-center gap-1",
+      "new": "bg-[#18b29c] text-white px-3 py-1 rounded-full text-xs font-bold",
+      "time_sensitive": "bg-red-100 text-red-600 px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1"
+    }
+  },
+  "visual_assets": {
+    "icons_library": "lucide-react",
+    "logo_style": "Text-based 'Lapopo' in Nunito ExtraBold, with the 'o's potentially stylized as coins or location pins. Primary color.",
+    "illustrations": "Use simple, flat 2D vector illustrations for 'Sell in 3 steps' and empty states. Avoid complex 3D unless minimal.",
+    "image_urls": {
+      "hero_bg": "https://images.unsplash.com/photo-1557804506-669a67965ba0?auto=format&fit=crop&q=80",
+      "canary_islands_vibe": [
+        "https://images.unsplash.com/photo-1771541685422-bf717d652fa8?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMjV8MHwxfHNlYXJjaHw0fHxzdXJmYm9hcmQlMjBvbiUyMGJlYWNoJTIwY2FuYXJ5JTIwaXNsYW5kc3xlbnwwfHx8fDE3NzMxMzU1Mjh8MA&ixlib=rb-4.1.0&q=85",
+        "https://images.unsplash.com/photo-1675008814982-a18b8efb7e7e?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMjV8MHwxfHNlYXJjaHwxfHxzdXJmYm9hcmQlMjBvbiUyMGJlYWNoJTIwY2FuYXJ5JTIwaXNsYW5kc3xlbnwwfHx8fDE3NzMxMzU1Mjh8MA&ixlib=rb-4.1.0&q=85"
+      ],
+      "products": {
+        "electronics": "https://images.unsplash.com/photo-1588768904397-cb062c91ba55?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxODh8MHwxfHNlYXJjaHwzfHx2aW50YWdlJTIwY2FtZXJhJTIwd2hpdGUlMjBiYWNrZ3JvdW5kfGVufDB8fHx8MTc3MzEzNTUyOHww&ixlib=rb-4.1.0&q=85",
+        "vintage": "https://images.unsplash.com/photo-1563552744114-78ff178ac8de?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxODh8MHwxfHNlYXJjaHwyfHx2aW50YWdlJTIwY2FtZXJhJTIwd2hpdGUlMjBiYWNrZ3JvdW5kfGVufDB8fHx8MTc3MzEzNTUyOHww&ixlib=rb-4.1.0&q=85",
+        "furniture": "https://images.unsplash.com/photo-1592078615290-033ee584e267?auto=format&fit=crop&q=80",
+        "clothing": "https://images.unsplash.com/photo-1523381210434-271e8be1f52b?auto=format&fit=crop&q=80"
+      },
+      "avatars": [
+        "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&q=80",
+        "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&q=80"
+      ]
+    }
+  },
+  "motion": {
+    "hover": "transition-all duration-300 ease-out",
+    "enter": "animate-in fade-in zoom-in-95 duration-500",
+    "exit": "animate-out fade-out zoom-out-95 duration-300",
+    "pulse": "animate-pulse"
+  },
+  "accessibility": {
+    "contrast_check": "Ensure white text on Teal/Orange buttons is legible. Use dark text on light backgrounds always.",
+    "focus_states": "ring-2 ring-offset-2 ring-[#18b29c]",
+    "aria_labels": "Required for all icon-only buttons (like 'Heart' or 'Search')."
+  },
+  "instructions_to_main_agent": [
+    "1. THEME: Force Light Mode. Do not implement Dark Mode toggle.",
+    "2. UI LIBRARY: Use Shadcn UI but HEAVILY customize the radius to be 'rounded-2xl' or 'rounded-full' to match the 'Lapopo' soft aesthetic. Do not use default sharp edges.",
+    "3. HEADER: Sticky header with blur. Mobile: Bottom navigation bar for 'Home', 'Search', 'Sell', 'Profile'.",
+    "4. AUCTION CARDS: Must show: Image (aspect-square), Title (truncate-2-lines), Current Bid (Big, Teal), Time Left (Red if <24h), 'Solo Canarias' badge (if applicable).",
+    "5. COUNTDOWN: Implement a real-time countdown component. It must tick.",
+    "6. FORMS: Break 'Create Auction' into a 3-step wizard (Details -> Photos -> Pricing/Duration).",
+    "7. EMPTY STATES: Use friendly illustrations when no bids or auctions are found.",
+    "8. LANGUAGE: ALL TEXT MUST BE IN SPANISH."
+  ],
+  "UNIVERSAL_GUIDELINES": [
+    "Do not use gradients for text.",
+    "Avoid standard 'Bootstrap' grid looks. Use asymmetric grids where possible for featured items.",
+    "Buttons must have a 'click' feel (scale down slightly on active).",
+    "All interactive elements must have `data-testid`."
+  ]
+}
