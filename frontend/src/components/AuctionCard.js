@@ -1,11 +1,28 @@
 import { Link } from 'react-router-dom';
-import { MapPin, Gavel, Hand } from 'lucide-react';
+import { MapPin, Gavel, Hand, Heart, ShoppingCart } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Countdown } from './Countdown';
 import { isCanarias } from '@/lib/api';
+import { useAuth } from '@/context/AuthContext';
+import api from '@/lib/api';
+import { useState } from 'react';
+import { toast } from 'sonner';
 
-export function AuctionCard({ auction }) {
+export function AuctionCard({ auction, initialFavorited = false }) {
   const canarias = isCanarias(auction.location);
+  const { user } = useAuth();
+  const [faved, setFaved] = useState(initialFavorited);
+  const hasBuyNow = auction.buy_now_price && auction.status === 'active';
+
+  const toggleFav = async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!user) return;
+    try {
+      const res = await api.post(`/favoritos/${auction.id}`);
+      setFaved(res.data.favorited);
+    } catch { /* ignore */ }
+  };
 
   return (
     <Link
@@ -19,17 +36,39 @@ export function AuctionCard({ auction }) {
           alt={auction.title}
           className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
         />
-        {canarias && (
-          <div className="absolute top-2 left-2">
+        <div className="absolute top-2 left-2 flex gap-1.5 flex-wrap">
+          {canarias && (
             <Badge className="bg-[#ffb347]/90 text-white border-0 text-xs font-bold gap-1" data-testid="canarias-badge">
               <Hand className="w-3 h-3" />
               Canarias
             </Badge>
+          )}
+          {hasBuyNow && (
+            <Badge className="bg-[#ffb347] text-white border-0 text-xs font-bold gap-1" data-testid="buy-now-badge">
+              <ShoppingCart className="w-3 h-3" />
+              Compralo ya
+            </Badge>
+          )}
+        </div>
+        <div className="absolute top-2 right-2 flex flex-col gap-1.5 items-end">
+          <div className="bg-white/90 backdrop-blur-sm rounded-full px-2.5 py-1 shadow-sm">
+            <Countdown endTime={auction.end_time} compact />
+          </div>
+          {user && (
+            <button
+              onClick={toggleFav}
+              className={`w-8 h-8 rounded-full flex items-center justify-center shadow-sm transition-all ${faved ? 'bg-red-500 text-white' : 'bg-white/90 backdrop-blur-sm text-slate-400 hover:text-red-400'}`}
+              data-testid={`fav-btn-${auction.id}`}
+            >
+              <Heart className={`w-4 h-4 ${faved ? 'fill-current' : ''}`} />
+            </button>
+          )}
+        </div>
+        {auction.status === 'cancelled' && (
+          <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
+            <span className="bg-red-500 text-white px-4 py-2 rounded-full font-bold text-sm">Cancelada</span>
           </div>
         )}
-        <div className="absolute top-2 right-2 bg-white/90 backdrop-blur-sm rounded-full px-2.5 py-1 shadow-sm">
-          <Countdown endTime={auction.end_time} compact />
-        </div>
       </div>
 
       <div className="p-4">

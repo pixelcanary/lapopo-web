@@ -308,7 +308,7 @@ export default function HomePage() {
           <div className="flex flex-col md:flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-2">
               <span className="text-xl font-extrabold text-[#18b29c]" style={{ fontFamily: 'Nunito, sans-serif' }}>Lapopo</span>
-              <span className="text-sm">&copy; 2025</span>
+              <span className="text-sm">&copy; 2026</span>
             </div>
             <div className="flex gap-6 text-sm">
               <a href="#" className="hover:text-white transition-colors" data-testid="footer-terms">T&eacute;rminos y condiciones</a>
