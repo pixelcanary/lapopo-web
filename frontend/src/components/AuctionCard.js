@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { MapPin, Gavel, Hand, Heart, ShoppingCart, Star } from 'lucide-react';
+import { MapPin, Gavel, Hand, Heart, ShoppingCart, Star, Zap, Crown, CheckCircle } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Countdown } from './Countdown';
 import { isCanarias } from '@/lib/api';
@@ -49,6 +49,24 @@ export function AuctionCard({ auction, initialFavorited = false }) {
               Compralo ya
             </Badge>
           )}
+          {auction.featured?.includes('destacada') && (
+            <Badge className="bg-[#d4a017] text-white border-0 text-xs font-bold gap-1" data-testid="featured-badge">
+              <Star className="w-3 h-3 fill-current" />
+              Destacada
+            </Badge>
+          )}
+          {auction.featured?.includes('urgente') && (
+            <Badge className="bg-orange-500 text-white border-0 text-xs font-bold gap-1" data-testid="urgente-badge">
+              <Zap className="w-3 h-3" />
+              Termina pronto
+            </Badge>
+          )}
+          {auction.featured?.includes('home') && (
+            <Badge className="bg-[#18b29c] text-white border-0 text-xs font-bold gap-1" data-testid="home-badge">
+              <Crown className="w-3 h-3" />
+              Home
+            </Badge>
+          )}
         </div>
         <div className="absolute top-2 right-2 flex flex-col gap-1.5 items-end">
           <div className="bg-white/90 backdrop-blur-sm rounded-full px-2.5 py-1 shadow-sm">
@@ -92,6 +110,11 @@ export function AuctionCard({ auction, initialFavorited = false }) {
         <div className="flex items-center gap-1 mt-2 text-xs text-slate-500">
           <MapPin className="w-3 h-3" />
           {auction.location}
+          {auction.seller_plan === 'pro' && (
+            <span className="ml-1 flex items-center gap-0.5 text-[#18b29c]" data-testid={`verified-seller-${auction.id}`}>
+              <CheckCircle className="w-3 h-3 fill-[#18b29c] text-white" />
+            </span>
+          )}
           {auction.seller_rating_count > 0 && (
             <span className="ml-auto flex items-center gap-0.5" data-testid={`seller-rating-${auction.id}`}>
               <Star className="w-3 h-3 text-[#ffb347] fill-[#ffb347]" />

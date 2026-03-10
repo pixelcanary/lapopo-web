@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Edit, Gavel, Package, Loader2, LogOut, Heart, Trophy, Bell, Star } from 'lucide-react';
+import { Edit, Gavel, Package, Loader2, LogOut, Heart, Trophy, Bell, Star, Crown, AlertTriangle, CreditCard, CheckCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
@@ -22,6 +22,7 @@ export default function ProfilePage() {
   const [saving, setSaving] = useState(false);
   const [notifications, setNotifications] = useState([]);
   const [ratings, setRatings] = useState([]);
+  const [disputes, setDisputes] = useState([]);
 
   useEffect(() => {
     if (!authLoading && !user) { navigate('/auth?tab=login'); return; }
@@ -35,6 +36,7 @@ export default function ProfilePage() {
       setProfile(res.data);
       setEditName(res.data.user?.name || '');
       setRatings(res.data.ratings || []);
+      setDisputes(res.data.disputes || []);
     } catch { toast.error('Error al cargar perfil'); }
     finally { setLoading(false); }
   };
@@ -90,7 +92,20 @@ export default function ProfilePage() {
               <div className="mt-1" data-testid="profile-rating">
                 <StarRating rating={profile.rating_avg || 0} count={profile.rating_count || 0} size="sm" />
               </div>
+              {profile.plan && profile.plan !== 'free' && (
+                <Badge className={`mt-1 rounded-full text-xs border-0 ${profile.plan === 'pro' ? 'bg-[#ffb347]/10 text-[#ffb347]' : 'bg-[#18b29c]/10 text-[#18b29c]'}`} data-testid="profile-plan-badge">
+                  {profile.plan === 'pro' ? <><Crown className="w-3 h-3 mr-1" />Pro</> : <><CreditCard className="w-3 h-3 mr-1" />Vendedor</>}
+                </Badge>
+              )}
+              {profile.plan === 'pro' && (
+                <Badge className="mt-1 bg-[#18b29c]/10 text-[#18b29c] border-0 rounded-full text-xs" data-testid="profile-verified-badge">
+                  <CheckCircle className="w-3 h-3 mr-1" /> Vendedor verificado
+                </Badge>
+              )}
             </div>
+            <Button variant="outline" onClick={() => navigate('/precios')} className="rounded-full flex-shrink-0" data-testid="profile-pricing-btn">
+              <CreditCard className="w-4 h-4 mr-1" /> Planes
+            </Button>
             <Button variant="outline" onClick={() => { logout(); navigate('/'); }} className="rounded-full flex-shrink-0" data-testid="profile-logout-btn">
               <LogOut className="w-4 h-4 mr-1" /> Cerrar sesion
             </Button>
@@ -98,12 +113,16 @@ export default function ProfilePage() {
         </CardContent></Card>
 
         <Tabs defaultValue="auctions">
-          <TabsList className="w-full grid grid-cols-6 rounded-xl mb-6" data-testid="profile-tabs">
+          <TabsList className="w-full grid grid-cols-7 rounded-xl mb-6" data-testid="profile-tabs">
             <TabsTrigger value="auctions" className="rounded-lg text-xs sm:text-sm" data-testid="profile-tab-auctions"><Package className="w-4 h-4 mr-1 hidden sm:block" /> Subastas</TabsTrigger>
             <TabsTrigger value="bids" className="rounded-lg text-xs sm:text-sm" data-testid="profile-tab-bids"><Gavel className="w-4 h-4 mr-1 hidden sm:block" /> Pujas</TabsTrigger>
             <TabsTrigger value="won" className="rounded-lg text-xs sm:text-sm" data-testid="profile-tab-won"><Trophy className="w-4 h-4 mr-1 hidden sm:block" /> Ganadas</TabsTrigger>
             <TabsTrigger value="favorites" className="rounded-lg text-xs sm:text-sm" data-testid="profile-tab-favorites"><Heart className="w-4 h-4 mr-1 hidden sm:block" /> Favoritos</TabsTrigger>
             <TabsTrigger value="ratings" className="rounded-lg text-xs sm:text-sm" data-testid="profile-tab-ratings"><Star className="w-4 h-4 mr-1 hidden sm:block" /> Valoraciones</TabsTrigger>
+            <TabsTrigger value="disputes" className="rounded-lg text-xs sm:text-sm relative" data-testid="profile-tab-disputes">
+              <AlertTriangle className="w-4 h-4 mr-1 hidden sm:block" /> Disputas
+              {disputes.filter(d => d.status === 'open' || d.status === 'reviewing').length > 0 && <span className="absolute -top-1 -right-1 w-4 h-4 bg-orange-500 text-white text-[9px] font-bold rounded-full flex items-center justify-center">{disputes.filter(d => d.status === 'open' || d.status === 'reviewing').length}</span>}
+            </TabsTrigger>
             <TabsTrigger value="notifications" className="rounded-lg text-xs sm:text-sm relative" data-testid="profile-tab-notifications">
               <Bell className="w-4 h-4 mr-1 hidden sm:block" /> Avisos
               {notifications.filter(n => !n.read).length > 0 && <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white text-[9px] font-bold rounded-full flex items-center justify-center">{notifications.filter(n => !n.read).length}</span>}
@@ -209,6 +228,37 @@ export default function ProfilePage() {
               <div className="text-center py-16" data-testid="empty-ratings">
                 <Star className="w-12 h-12 text-slate-300 mx-auto mb-4" />
                 <p className="text-slate-500 mb-4">Aun no has recibido valoraciones</p>
+              </div>
+            )}
+          </TabsContent>
+
+          <TabsContent value="disputes">
+            {disputes.length > 0 ? (
+              <div className="space-y-3">
+                {disputes.map((d) => {
+                  const statusMap = { open: { cls: 'bg-orange-100 text-orange-700', label: 'Abierta' }, reviewing: { cls: 'bg-blue-100 text-blue-700', label: 'En revision' }, resolved_buyer: { cls: 'bg-green-100 text-green-700', label: 'Resuelta (comprador)' }, resolved_seller: { cls: 'bg-green-100 text-green-700', label: 'Resuelta (vendedor)' }, closed: { cls: 'bg-slate-100 text-slate-600', label: 'Cerrada' } };
+                  const s = statusMap[d.status] || { cls: 'bg-slate-100', label: d.status };
+                  return (
+                    <Card key={d.id} className="border-0 shadow-sm rounded-xl" data-testid={`profile-dispute-${d.id}`}>
+                      <CardContent className="p-4">
+                        <div className="flex items-start justify-between mb-2">
+                          <div>
+                            <h3 className="font-bold text-sm text-slate-800">{d.auction_title}</h3>
+                            <p className="text-xs text-slate-500">{d.reason}</p>
+                            <p className="text-xs text-slate-400 mt-0.5">{new Date(d.created_at).toLocaleDateString('es-ES')}</p>
+                          </div>
+                          <Badge className={`${s.cls} border-0 rounded-full text-xs`}>{s.label}</Badge>
+                        </div>
+                        <p className="text-xs text-slate-600">{d.description}</p>
+                      </CardContent>
+                    </Card>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="text-center py-16" data-testid="empty-disputes">
+                <AlertTriangle className="w-12 h-12 text-slate-300 mx-auto mb-4" />
+                <p className="text-slate-500">No tienes disputas</p>
               </div>
             )}
           </TabsContent>

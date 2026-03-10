@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import { Search, Clock, Tag, MapPin, Laptop, Home as HomeIcon, Camera, Truck, ChevronRight, HelpCircle } from 'lucide-react';
+import { Search, Clock, Tag, MapPin, Laptop, Home as HomeIcon, Camera, Truck, ChevronRight, HelpCircle, Star } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -144,6 +144,19 @@ export default function HomePage() {
           ))}
         </div>
       </section>
+
+      {/* Featured Auctions (home type) */}
+      {!loading && !activeFilter && auctions.filter(a => a.featured?.includes('home')).length > 0 && (
+        <section className="container mx-auto px-4 md:px-6 max-w-7xl pt-10 pb-2" data-testid="featured-home-section">
+          <h2 className="text-2xl md:text-3xl font-bold text-slate-800 mb-4" style={{ fontFamily: 'Nunito, sans-serif' }}>
+            <Star className="w-6 h-6 inline text-[#d4a017] mr-1 fill-[#d4a017]" />
+            Subastas Destacadas
+          </h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 md:gap-6">
+            {auctions.filter(a => a.featured?.includes('home')).map(a => <AuctionCard key={a.id} auction={a} />)}
+          </div>
+        </section>
+      )}
 
       {/* Auctions Grid */}
       <section className="container mx-auto px-4 md:px-6 max-w-7xl py-12">
@@ -311,6 +324,7 @@ export default function HomePage() {
               <span className="text-sm">&copy; 2026</span>
             </div>
             <div className="flex gap-6 text-sm">
+              <a href="/precios" className="hover:text-white transition-colors" data-testid="footer-pricing">Precios</a>
               <a href="#" className="hover:text-white transition-colors" data-testid="footer-terms">T&eacute;rminos y condiciones</a>
               <a href="#" className="hover:text-white transition-colors" data-testid="footer-privacy">Privacidad</a>
               <a href="#" className="hover:text-white transition-colors" data-testid="footer-contact">Contacto</a>

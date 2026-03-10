@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, Header
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Header, Request
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -6,11 +6,12 @@ import os
 import logging
 from pathlib import Path
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Dict
 import uuid
 from datetime import datetime, timezone, timedelta
 from passlib.context import CryptContext
 import jwt
+from emergentintegrations.payments.stripe.checkout import StripeCheckout, CheckoutSessionRequest
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -78,6 +79,44 @@ class RatingCreate(BaseModel):
     rated_user_id: str
     rating: int
     comment: Optional[str] = None
+
+class DisputeCreate(BaseModel):
+    auction_id: str
+    reason: str
+    description: str
+
+class DisputeMessage(BaseModel):
+    content: str
+
+class DisputeStatusUpdate(BaseModel):
+    status: str
+
+class CheckoutRequest(BaseModel):
+    plan: Optional[str] = None
+    featured_type: Optional[str] = None
+    auction_id: Optional[str] = None
+    origin_url: str
+
+
+# Plan & Featured constants
+PLANS = {
+    "free": {"name": "Gratis", "price": 0.0, "max_auctions": 5, "featured_free": 0, "verified": False},
+    "vendedor": {"name": "Vendedor", "price": 2.99, "max_auctions": None, "featured_free": 1, "verified": False},
+    "pro": {"name": "Pro", "price": 6.99, "max_auctions": None, "featured_free": 3, "verified": True},
+}
+FEATURED_OPTIONS = {
+    "destacada": {"name": "Subasta Destacada", "price": 0.49, "description": "Badge dorado, prioridad en su seccion"},
+    "home": {"name": "Subasta en Home", "price": 0.99, "description": "Aparece en Subastas Destacadas de la portada"},
+    "urgente": {"name": "Urgente", "price": 0.29, "description": "Badge naranja Termina pronto con prioridad visual"},
+}
+DISPUTE_REASONS = [
+    "Producto no recibido",
+    "Producto no coincide con la descripcion",
+    "Vendedor no responde",
+    "Comprador no paga",
+    "Producto danado",
+    "Otro",
+]
 
 
 # Auth helpers
@@ -198,13 +237,43 @@ async def enrich_with_ratings(auctions):
     seller_ids = list(set(a["seller_id"] for a in auctions))
     if not seller_ids:
         return auctions
-    users = await db.users.find({"id": {"$in": seller_ids}}, {"_id": 0, "id": 1, "rating_avg": 1, "rating_count": 1}).to_list(len(seller_ids))
-    rating_map = {u["id"]: (u.get("rating_avg", 0), u.get("rating_count", 0)) for u in users}
+    users = await db.users.find({"id": {"$in": seller_ids}}, {"_id": 0, "id": 1, "rating_avg": 1, "rating_count": 1, "plan": 1}).to_list(len(seller_ids))
+    rating_map = {u["id"]: (u.get("rating_avg", 0), u.get("rating_count", 0), u.get("plan", "free")) for u in users}
     for a in auctions:
-        avg, count = rating_map.get(a["seller_id"], (0, 0))
+        avg, count, plan = rating_map.get(a["seller_id"], (0, 0, "free"))
         a["seller_rating_avg"] = avg
         a["seller_rating_count"] = count
+        a["seller_plan"] = plan
     return auctions
+
+
+async def enrich_with_featured(auctions):
+    auc_ids = [a["id"] for a in auctions]
+    if not auc_ids:
+        return auctions
+    feats = await db.featured_listings.find({"auction_id": {"$in": auc_ids}, "active": True}, {"_id": 0}).to_list(500)
+    feat_map = {}
+    for f in feats:
+        feat_map.setdefault(f["auction_id"], []).append(f["type"])
+    for a in auctions:
+        a["featured"] = feat_map.get(a["id"], [])
+    return auctions
+
+
+async def get_payments_enabled():
+    s = await db.settings.find_one({"key": "payments_enabled"}, {"_id": 0})
+    return s["value"] if s else False
+
+
+async def get_user_plan(user_id):
+    u = await db.users.find_one({"id": user_id}, {"_id": 0, "plan": 1})
+    return u.get("plan", "free") if u else "free"
+
+
+async def count_user_auctions_this_month(user_id):
+    now = datetime.now(timezone.utc)
+    start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    return await db.auctions.count_documents({"seller_id": user_id, "created_at": {"$gte": start.isoformat()}})
 
 
 # AUTH ENDPOINTS
@@ -278,7 +347,10 @@ async def list_auctions(
     elif sort == "most_bids":
         sort_field = [("bid_count", -1)]
 
-    return await enrich_with_ratings(await db.auctions.find(q, {"_id": 0}).sort(sort_field).to_list(100))
+    auctions = await db.auctions.find(q, {"_id": 0}).sort(sort_field).to_list(100)
+    auctions = await enrich_with_ratings(auctions)
+    auctions = await enrich_with_featured(auctions)
+    return auctions
 
 @api_router.get("/subastas/{auction_id}")
 async def get_auction(auction_id: str):
@@ -286,9 +358,12 @@ async def get_auction(auction_id: str):
     auction = await db.auctions.find_one({"id": auction_id}, {"_id": 0})
     if not auction:
         raise HTTPException(404, "Subasta no encontrada")
-    seller = await db.users.find_one({"id": auction["seller_id"]}, {"_id": 0, "rating_avg": 1, "rating_count": 1})
+    seller = await db.users.find_one({"id": auction["seller_id"]}, {"_id": 0, "rating_avg": 1, "rating_count": 1, "plan": 1})
     auction["seller_rating_avg"] = seller.get("rating_avg", 0) if seller else 0
     auction["seller_rating_count"] = seller.get("rating_count", 0) if seller else 0
+    auction["seller_plan"] = seller.get("plan", "free") if seller else "free"
+    feats = await db.featured_listings.find({"auction_id": auction_id, "active": True}, {"_id": 0}).to_list(10)
+    auction["featured"] = [f["type"] for f in feats]
     return auction
 
 @api_router.post("/subastas")
@@ -303,6 +378,15 @@ async def create_auction(data: AuctionCreate, user=Depends(get_current_user)):
         raise HTTPException(400, "Maximo 6 fotos")
     if data.buy_now_price is not None and data.buy_now_price <= data.starting_price:
         raise HTTPException(400, "El precio de compra inmediata debe ser mayor que el precio de salida")
+
+    payments_on = await get_payments_enabled()
+    if payments_on:
+        plan = await get_user_plan(user["user_id"])
+        plan_info = PLANS.get(plan, PLANS["free"])
+        if plan_info["max_auctions"] is not None:
+            count = await count_user_auctions_this_month(user["user_id"])
+            if count >= plan_info["max_auctions"]:
+                raise HTTPException(403, f"Has alcanzado el limite de {plan_info['max_auctions']} subastas/mes. Mejora tu plan para publicar mas.")
 
     now = datetime.now(timezone.utc)
     aid = str(uuid.uuid4())
@@ -380,6 +464,7 @@ async def get_user_profile(user_id: str):
     fav_ids = [f["auction_id"] for f in favs]
     fav_auctions = await db.auctions.find({"id": {"$in": fav_ids}}, {"_id": 0}).to_list(100) if fav_ids else []
     ratings = await db.ratings.find({"rated_id": user_id}, {"_id": 0}).sort("created_at", -1).to_list(100)
+    disputes = await db.disputes.find({"$or": [{"reporter_id": user_id}, {"reported_id": user_id}]}, {"_id": 0}).sort("created_at", -1).to_list(50)
     return {
         "user": user,
         "auctions": auctions,
@@ -389,6 +474,8 @@ async def get_user_profile(user_id: str):
         "ratings": ratings,
         "rating_avg": user.get("rating_avg", 0),
         "rating_count": user.get("rating_count", 0),
+        "plan": user.get("plan", "free"),
+        "disputes": disputes,
     }
 
 @api_router.put("/usuarios/{user_id}")
@@ -705,6 +792,271 @@ async def admin_delete_auction(auction_id: str, user=Depends(require_admin)):
     return {"message": "Subasta eliminada"}
 
 
+# PLANS & SUBSCRIPTIONS
+@api_router.get("/planes")
+async def get_plans():
+    payments_on = await get_payments_enabled()
+    return {"plans": PLANS, "featured_options": FEATURED_OPTIONS, "payments_enabled": payments_on, "dispute_reasons": DISPUTE_REASONS}
+
+@api_router.get("/suscripciones/mi-plan")
+async def my_plan(user=Depends(get_current_user)):
+    u = await db.users.find_one({"id": user["user_id"]}, {"_id": 0, "plan": 1})
+    plan = u.get("plan", "free") if u else "free"
+    payments_on = await get_payments_enabled()
+    auc_count = await count_user_auctions_this_month(user["user_id"])
+    plan_info = PLANS.get(plan, PLANS["free"])
+    return {"plan": plan, "plan_info": plan_info, "auctions_this_month": auc_count, "payments_enabled": payments_on}
+
+@api_router.post("/suscripciones/crear-sesion")
+async def create_subscription_session(data: CheckoutRequest, request: Request, user=Depends(get_current_user)):
+    if data.plan not in ["vendedor", "pro"]:
+        raise HTTPException(400, "Plan no valido")
+    plan_info = PLANS[data.plan]
+    stripe_key = os.environ.get("STRIPE_API_KEY")
+    host_url = str(request.base_url).rstrip("/")
+    webhook_url = f"{host_url}/api/webhook/stripe"
+    stripe_checkout = StripeCheckout(api_key=stripe_key, webhook_url=webhook_url)
+    success_url = f"{data.origin_url}/precios?session_id={{CHECKOUT_SESSION_ID}}"
+    cancel_url = f"{data.origin_url}/precios"
+    req = CheckoutSessionRequest(
+        amount=plan_info["price"], currency="eur",
+        success_url=success_url, cancel_url=cancel_url,
+        metadata={"user_id": user["user_id"], "type": "subscription", "plan": data.plan}
+    )
+    session = await stripe_checkout.create_checkout_session(req)
+    await db.payment_transactions.insert_one({
+        "id": str(uuid.uuid4()), "session_id": session.session_id, "user_id": user["user_id"],
+        "type": "subscription", "plan": data.plan, "amount": plan_info["price"], "currency": "eur",
+        "payment_status": "pending", "created_at": datetime.now(timezone.utc).isoformat()
+    })
+    return {"url": session.url, "session_id": session.session_id}
+
+@api_router.post("/suscripciones/cancelar")
+async def cancel_subscription(user=Depends(get_current_user)):
+    await db.users.update_one({"id": user["user_id"]}, {"$set": {"plan": "free"}})
+    return {"message": "Plan cancelado. Ahora tienes el plan Gratis."}
+
+
+# FEATURED LISTINGS
+@api_router.post("/destacados/crear-sesion")
+async def create_featured_session(data: CheckoutRequest, request: Request, user=Depends(get_current_user)):
+    if data.featured_type not in FEATURED_OPTIONS:
+        raise HTTPException(400, "Tipo de destacado no valido")
+    if not data.auction_id:
+        raise HTTPException(400, "auction_id requerido")
+    auction = await db.auctions.find_one({"id": data.auction_id, "seller_id": user["user_id"]}, {"_id": 0})
+    if not auction:
+        raise HTTPException(404, "Subasta no encontrada o no eres el propietario")
+    feat_info = FEATURED_OPTIONS[data.featured_type]
+    stripe_key = os.environ.get("STRIPE_API_KEY")
+    host_url = str(request.base_url).rstrip("/")
+    webhook_url = f"{host_url}/api/webhook/stripe"
+    stripe_checkout = StripeCheckout(api_key=stripe_key, webhook_url=webhook_url)
+    success_url = f"{data.origin_url}/subasta/{data.auction_id}?session_id={{CHECKOUT_SESSION_ID}}"
+    cancel_url = f"{data.origin_url}/subasta/{data.auction_id}"
+    req = CheckoutSessionRequest(
+        amount=feat_info["price"], currency="eur",
+        success_url=success_url, cancel_url=cancel_url,
+        metadata={"user_id": user["user_id"], "type": "featured", "featured_type": data.featured_type, "auction_id": data.auction_id}
+    )
+    session = await stripe_checkout.create_checkout_session(req)
+    await db.payment_transactions.insert_one({
+        "id": str(uuid.uuid4()), "session_id": session.session_id, "user_id": user["user_id"],
+        "type": "featured", "featured_type": data.featured_type, "auction_id": data.auction_id,
+        "amount": feat_info["price"], "currency": "eur",
+        "payment_status": "pending", "created_at": datetime.now(timezone.utc).isoformat()
+    })
+    return {"url": session.url, "session_id": session.session_id}
+
+@api_router.post("/destacados/activar-gratis")
+async def activate_free_featured(data: CheckoutRequest, user=Depends(get_current_user)):
+    if data.featured_type not in FEATURED_OPTIONS:
+        raise HTTPException(400, "Tipo no valido")
+    if not data.auction_id:
+        raise HTTPException(400, "auction_id requerido")
+    auction = await db.auctions.find_one({"id": data.auction_id, "seller_id": user["user_id"]}, {"_id": 0})
+    if not auction:
+        raise HTTPException(404, "Subasta no encontrada")
+    plan = await get_user_plan(user["user_id"])
+    plan_info = PLANS.get(plan, PLANS["free"])
+    free_featured = plan_info.get("featured_free", 0)
+    if free_featured <= 0:
+        raise HTTPException(403, "Tu plan no incluye destacados gratis")
+    now = datetime.now(timezone.utc)
+    start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    used = await db.featured_listings.count_documents({"user_id": user["user_id"], "free": True, "created_at": {"$gte": start.isoformat()}})
+    if used >= free_featured:
+        raise HTTPException(403, f"Ya has usado tus {free_featured} destacados gratis este mes")
+    await db.featured_listings.insert_one({
+        "id": str(uuid.uuid4()), "auction_id": data.auction_id, "user_id": user["user_id"],
+        "type": data.featured_type, "active": True, "free": True,
+        "created_at": now.isoformat()
+    })
+    return {"message": "Destacado activado gratis"}
+
+
+# PAYMENT STATUS & WEBHOOK
+@api_router.get("/pagos/estado/{session_id}")
+async def check_payment_status(session_id: str, request: Request, user=Depends(get_current_user)):
+    tx = await db.payment_transactions.find_one({"session_id": session_id}, {"_id": 0})
+    if not tx:
+        raise HTTPException(404, "Transaccion no encontrada")
+    if tx.get("payment_status") == "paid":
+        return {"status": "paid", "type": tx.get("type"), "plan": tx.get("plan")}
+    stripe_key = os.environ.get("STRIPE_API_KEY")
+    host_url = str(request.base_url).rstrip("/")
+    webhook_url = f"{host_url}/api/webhook/stripe"
+    stripe_checkout = StripeCheckout(api_key=stripe_key, webhook_url=webhook_url)
+    status = await stripe_checkout.get_checkout_status(session_id)
+    if status.payment_status == "paid":
+        existing = await db.payment_transactions.find_one({"session_id": session_id, "payment_status": "paid"})
+        if not existing:
+            await db.payment_transactions.update_one({"session_id": session_id}, {"$set": {"payment_status": "paid", "updated_at": datetime.now(timezone.utc).isoformat()}})
+            if tx.get("type") == "subscription":
+                await db.users.update_one({"id": tx["user_id"]}, {"$set": {"plan": tx["plan"]}})
+            elif tx.get("type") == "featured":
+                await db.featured_listings.insert_one({
+                    "id": str(uuid.uuid4()), "auction_id": tx["auction_id"], "user_id": tx["user_id"],
+                    "type": tx["featured_type"], "active": True, "free": False,
+                    "created_at": datetime.now(timezone.utc).isoformat()
+                })
+    return {"status": status.status, "payment_status": status.payment_status, "type": tx.get("type"), "plan": tx.get("plan")}
+
+@api_router.post("/webhook/stripe")
+async def stripe_webhook(request: Request):
+    body = await request.body()
+    sig = request.headers.get("Stripe-Signature", "")
+    stripe_key = os.environ.get("STRIPE_API_KEY")
+    host_url = str(request.base_url).rstrip("/")
+    webhook_url = f"{host_url}/api/webhook/stripe"
+    stripe_checkout = StripeCheckout(api_key=stripe_key, webhook_url=webhook_url)
+    try:
+        event = await stripe_checkout.handle_webhook(body, sig)
+        if event.payment_status == "paid":
+            tx = await db.payment_transactions.find_one({"session_id": event.session_id, "payment_status": {"$ne": "paid"}})
+            if tx:
+                await db.payment_transactions.update_one({"session_id": event.session_id}, {"$set": {"payment_status": "paid"}})
+                if tx.get("type") == "subscription":
+                    await db.users.update_one({"id": tx["user_id"]}, {"$set": {"plan": tx["plan"]}})
+                elif tx.get("type") == "featured":
+                    await db.featured_listings.insert_one({
+                        "id": str(uuid.uuid4()), "auction_id": tx["auction_id"], "user_id": tx["user_id"],
+                        "type": tx["featured_type"], "active": True, "free": False,
+                        "created_at": datetime.now(timezone.utc).isoformat()
+                    })
+    except Exception as e:
+        logger.error(f"Webhook error: {e}")
+    return {"received": True}
+
+
+# DISPUTES
+@api_router.post("/disputas")
+async def create_dispute(data: DisputeCreate, user=Depends(get_current_user)):
+    auction = await db.auctions.find_one({"id": data.auction_id}, {"_id": 0})
+    if not auction:
+        raise HTTPException(404, "Subasta no encontrada")
+    if auction["status"] != "finished":
+        raise HTTPException(400, "Solo puedes abrir disputa en subastas finalizadas")
+    uid = user["user_id"]
+    is_seller = uid == auction["seller_id"]
+    is_winner = uid == auction.get("winner_id")
+    if not is_seller and not is_winner:
+        raise HTTPException(403, "Solo el comprador o vendedor pueden abrir una disputa")
+    existing = await db.disputes.find_one({"auction_id": data.auction_id, "reporter_id": uid})
+    if existing:
+        raise HTTPException(400, "Ya tienes una disputa abierta para esta subasta")
+    reported_id = auction.get("winner_id") if is_seller else auction["seller_id"]
+    reported_name = auction.get("winner_name") if is_seller else auction["seller_name"]
+    doc = {
+        "id": str(uuid.uuid4()),
+        "auction_id": data.auction_id,
+        "auction_title": auction["title"],
+        "reporter_id": uid,
+        "reporter_name": user["name"],
+        "reported_id": reported_id,
+        "reported_name": reported_name,
+        "reason": data.reason,
+        "description": data.description,
+        "status": "open",
+        "messages": [],
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.disputes.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+@api_router.get("/disputas/mis-disputas")
+async def my_disputes(user=Depends(get_current_user)):
+    disputes = await db.disputes.find(
+        {"$or": [{"reporter_id": user["user_id"]}, {"reported_id": user["user_id"]}]},
+        {"_id": 0}
+    ).sort("created_at", -1).to_list(50)
+    return disputes
+
+@api_router.get("/disputas/{dispute_id}")
+async def get_dispute(dispute_id: str, user=Depends(get_current_user)):
+    d = await db.disputes.find_one({"id": dispute_id}, {"_id": 0})
+    if not d:
+        raise HTTPException(404, "Disputa no encontrada")
+    uid = user["user_id"]
+    is_admin = user.get("is_admin", False)
+    if not is_admin and uid != d["reporter_id"] and uid != d["reported_id"]:
+        raise HTTPException(403, "No tienes acceso a esta disputa")
+    return d
+
+@api_router.post("/disputas/{dispute_id}/mensaje")
+async def add_dispute_message(dispute_id: str, data: DisputeMessage, user=Depends(get_current_user)):
+    d = await db.disputes.find_one({"id": dispute_id}, {"_id": 0})
+    if not d:
+        raise HTTPException(404, "Disputa no encontrada")
+    uid = user["user_id"]
+    is_admin = user.get("is_admin", False)
+    if not is_admin and uid != d["reporter_id"] and uid != d["reported_id"]:
+        raise HTTPException(403, "No tienes acceso")
+    if d["status"] == "closed":
+        raise HTTPException(400, "La disputa esta cerrada")
+    msg = {"id": str(uuid.uuid4()), "sender_id": uid, "sender_name": user["name"], "content": data.content, "created_at": datetime.now(timezone.utc).isoformat()}
+    await db.disputes.update_one({"id": dispute_id}, {"$push": {"messages": msg}})
+    return msg
+
+@api_router.get("/admin/disputas")
+async def admin_list_disputes(status: Optional[str] = None, user=Depends(require_admin)):
+    q = {}
+    if status:
+        q["status"] = status
+    return await db.disputes.find(q, {"_id": 0}).sort("created_at", -1).to_list(200)
+
+@api_router.put("/admin/disputas/{dispute_id}/estado")
+async def admin_update_dispute(dispute_id: str, data: DisputeStatusUpdate, user=Depends(require_admin)):
+    valid_statuses = ["open", "reviewing", "resolved_buyer", "resolved_seller", "closed"]
+    if data.status not in valid_statuses:
+        raise HTTPException(400, "Estado no valido")
+    d = await db.disputes.find_one({"id": dispute_id}, {"_id": 0})
+    if not d:
+        raise HTTPException(404, "Disputa no encontrada")
+    await db.disputes.update_one({"id": dispute_id}, {"$set": {"status": data.status, "updated_at": datetime.now(timezone.utc).isoformat()}})
+    status_labels = {"reviewing": "en revision", "resolved_buyer": "resuelta a favor del comprador", "resolved_seller": "resuelta a favor del vendedor", "closed": "cerrada"}
+    label = status_labels.get(data.status, data.status)
+    for uid in [d["reporter_id"], d["reported_id"]]:
+        await create_notification(uid, "dispute_update", d["auction_id"], d["auction_title"],
+            f"Tu disputa sobre \"{d['auction_title']}\" ha sido {label}")
+    return {"message": f"Disputa actualizada a: {label}"}
+
+
+# ADMIN CONFIG
+@api_router.get("/admin/config")
+async def get_admin_config(user=Depends(require_admin)):
+    payments_on = await get_payments_enabled()
+    return {"payments_enabled": payments_on}
+
+@api_router.put("/admin/config")
+async def update_admin_config(config: dict, user=Depends(require_admin)):
+    if "payments_enabled" in config:
+        await db.settings.update_one({"key": "payments_enabled"}, {"$set": {"value": config["payments_enabled"]}}, upsert=True)
+    return {"message": "Configuracion actualizada"}
+
+
 # Include router
 app.include_router(api_router)
 
@@ -732,9 +1084,9 @@ async def seed_data():
     maria_id = str(uuid.uuid4())
     admin_id = str(uuid.uuid4())
     await db.users.insert_many([
-        {"id": demo_id, "name": "Carlos López", "email": "carlos@lapopo.es", "password_hash": pwd_context.hash("demo123"), "is_admin": False, "rating_avg": 0, "rating_count": 0, "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": maria_id, "name": "María García", "email": "maria@lapopo.es", "password_hash": pwd_context.hash("demo123"), "is_admin": False, "rating_avg": 0, "rating_count": 0, "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": admin_id, "name": "Admin Lapopo", "email": "admin@lapopo.es", "password_hash": pwd_context.hash("admin123"), "is_admin": True, "rating_avg": 0, "rating_count": 0, "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id": demo_id, "name": "Carlos López", "email": "carlos@lapopo.es", "password_hash": pwd_context.hash("demo123"), "is_admin": False, "rating_avg": 0, "rating_count": 0, "plan": "free", "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id": maria_id, "name": "María García", "email": "maria@lapopo.es", "password_hash": pwd_context.hash("demo123"), "is_admin": False, "rating_avg": 0, "rating_count": 0, "plan": "free", "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id": admin_id, "name": "Admin Lapopo", "email": "admin@lapopo.es", "password_hash": pwd_context.hash("admin123"), "is_admin": True, "rating_avg": 0, "rating_count": 0, "plan": "pro", "created_at": datetime.now(timezone.utc).isoformat()},
     ])
 
     now = datetime.now(timezone.utc)
@@ -752,7 +1104,8 @@ async def seed_data():
         {"id": str(uuid.uuid4()), "title": "Lote libros ciencia ficcion", "description": "Lote de 20 libros de ciencia ficcion. Asimov, Clarke, Philip K. Dick.", "images": ["https://images.unsplash.com/photo-1495446815901-a7297e633e8d?auto=format&fit=crop&q=80&w=600"], "starting_price": 5.0, "current_price": 12.50, "buy_now_price": None, "duration": "3d", "end_time": (now + timedelta(hours=10)).isoformat(), "category": "Libros", "location": "Gran Canaria", "delivery_type": "both", "seller_id": maria_id, "seller_name": "María García", "bids": [{"id": str(uuid.uuid4()), "user_id": demo_id, "user_name": "Carlos López", "amount": 8.0, "timestamp": (now - timedelta(hours=20)).isoformat()}, {"id": str(uuid.uuid4()), "user_id": demo_id, "user_name": "Carlos López", "amount": 12.50, "timestamp": (now - timedelta(hours=5)).isoformat()}], "bid_count": 2, "status": "active", "winner_id": None, "winner_name": None, "created_at": (now - timedelta(days=2, hours=14)).isoformat()},
     ]
     await db.auctions.insert_many(seeds)
-    logger.info(f"Seeded {len(seeds)} auctions and 2 demo users")
+    await db.settings.insert_one({"key": "payments_enabled", "value": False})
+    logger.info(f"Seeded {len(seeds)} auctions, 3 users, and settings")
 
 @app.on_event("shutdown")
 async def shutdown():

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { ArrowLeft, MapPin, User, Gavel, Hand, Package, Loader2, Tag, ShoppingCart, XCircle, Zap, Send, Mail, Star } from 'lucide-react';
+import { ArrowLeft, MapPin, User, Gavel, Hand, Package, Loader2, Tag, ShoppingCart, XCircle, Zap, Send, Mail, Star, Crown, AlertTriangle, CheckCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -40,6 +40,11 @@ export default function AuctionDetailPage() {
   const [ratingComment, setRatingComment] = useState('');
   const [submittingRating, setSubmittingRating] = useState(false);
   const [auctionRatings, setAuctionRatings] = useState(null);
+  const [showDisputeForm, setShowDisputeForm] = useState(false);
+  const [disputeReason, setDisputeReason] = useState('');
+  const [disputeDesc, setDisputeDesc] = useState('');
+  const [submittingDispute, setSubmittingDispute] = useState(false);
+  const [featuredPurchasing, setFeaturedPurchasing] = useState(null);
 
   const fetchAuction = useCallback(async () => {
     try {
@@ -148,6 +153,34 @@ export default function AuctionDetailPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auction?.status, auction?.id, user]);
+
+  const submitDispute = async () => {
+    if (!disputeReason) { toast.error('Selecciona un motivo'); return; }
+    if (!disputeDesc.trim()) { toast.error('Describe el problema'); return; }
+    setSubmittingDispute(true);
+    try {
+      await api.post('/disputas', { auction_id: id, reason: disputeReason, description: disputeDesc });
+      toast.success('Disputa abierta correctamente');
+      setShowDisputeForm(false);
+    } catch (err) { toast.error(err.response?.data?.detail || 'Error al abrir disputa'); }
+    finally { setSubmittingDispute(false); }
+  };
+
+  const purchaseFeatured = async (type) => {
+    setFeaturedPurchasing(type);
+    try {
+      const res = await api.post('/destacados/crear-sesion', { featured_type: type, auction_id: id, origin_url: window.location.origin });
+      window.location.href = res.data.url;
+    } catch (err) { toast.error(err.response?.data?.detail || 'Error'); setFeaturedPurchasing(null); }
+  };
+
+  const activateFreeFeatured = async (type) => {
+    try {
+      await api.post('/destacados/activar-gratis', { featured_type: type, auction_id: id, origin_url: window.location.origin });
+      toast.success('Destacado activado gratis');
+      fetchAuction();
+    } catch (err) { toast.error(err.response?.data?.detail || 'Error'); }
+  };
 
   if (loading) return <div className="min-h-screen bg-[#f5f7fa] flex items-center justify-center"><Loader2 className="w-8 h-8 animate-spin text-[#18b29c]" /></div>;
   if (!auction) return null;
@@ -395,9 +428,46 @@ export default function AuctionDetailPage() {
                 </div>
               )}
 
+              {/* Dispute button for finished auctions */}
+              {isFinished && (isOwner || isWinner) && auction.winner_id && (
+                <div className="mt-2">
+                  {!showDisputeForm ? (
+                    <Button variant="outline" onClick={() => setShowDisputeForm(true)} className="w-full rounded-full text-orange-600 border-orange-200 hover:bg-orange-50" data-testid="open-dispute-btn">
+                      <AlertTriangle className="w-4 h-4 mr-1" /> Abrir disputa
+                    </Button>
+                  ) : (
+                    <Card className="border border-orange-200 rounded-xl mt-2" data-testid="dispute-form">
+                      <CardContent className="p-4 space-y-3">
+                        <h3 className="font-bold text-sm text-orange-600 flex items-center gap-1"><AlertTriangle className="w-4 h-4" /> Abrir disputa</h3>
+                        <select value={disputeReason} onChange={(e) => setDisputeReason(e.target.value)} className="w-full rounded-lg border p-2 text-sm" data-testid="dispute-reason-select">
+                          <option value="">Selecciona un motivo...</option>
+                          {['Producto no recibido', 'Producto no coincide con la descripcion', 'Vendedor no responde', 'Comprador no paga', 'Producto danado', 'Otro'].map(r => (
+                            <option key={r} value={r}>{r}</option>
+                          ))}
+                        </select>
+                        <Textarea value={disputeDesc} onChange={(e) => setDisputeDesc(e.target.value)} placeholder="Describe el problema..." className="rounded-xl min-h-[60px]" data-testid="dispute-desc-input" />
+                        <div className="flex gap-2">
+                          <Button onClick={submitDispute} disabled={submittingDispute} className="bg-orange-500 text-white rounded-full flex-1" data-testid="submit-dispute-btn">
+                            {submittingDispute ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Enviar disputa'}
+                          </Button>
+                          <Button variant="outline" onClick={() => setShowDisputeForm(false)} className="rounded-full">Cancelar</Button>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )}
+                </div>
+              )}
+
               <Separator className="my-4" />
               <div className="space-y-3 text-sm">
-                <div className="flex items-center gap-2 text-slate-600"><User className="w-4 h-4 text-slate-400" />Vendedor: <span className="font-medium">{auction.seller_name}</span></div>
+                <div className="flex items-center gap-2 text-slate-600">
+                  <User className="w-4 h-4 text-slate-400" />Vendedor: <span className="font-medium">{auction.seller_name}</span>
+                  {auction.seller_plan === 'pro' && (
+                    <Badge className="bg-[#18b29c]/10 text-[#18b29c] border-0 rounded-full text-[10px] gap-0.5" data-testid="verified-seller-badge">
+                      <CheckCircle className="w-3 h-3" /> Verificado
+                    </Badge>
+                  )}
+                </div>
                 {(auction.seller_rating_count > 0) && (
                   <div className="flex items-center gap-2 text-slate-600" data-testid="detail-seller-rating">
                     <Star className="w-4 h-4 text-[#ffb347]" />

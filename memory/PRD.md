@@ -1,91 +1,93 @@
 # Lapopo - Plataforma de Subastas de Segunda Mano
 
 ## Problem Statement
-Build a full-stack auction web application called "Lapopo", a second-hand auction platform for Spain and the Canary Islands, similar to Wallapop but with auctions starting from 1 euro.
+Full-stack auction web application for Spain and the Canary Islands, similar to Wallapop but with auctions starting from 1 euro.
 
 ## Tech Stack
 - **Frontend:** React, TailwindCSS, Shadcn UI
 - **Backend:** FastAPI (Python)
 - **Database:** MongoDB
 - **Auth:** JWT
+- **Payments:** Stripe (via emergentintegrations)
 
 ## Design
 - Colors: #18b29c (primary), #ffb347 (accent), #f5f7fa (background)
 - Font: Nunito (headings), system-ui
-- Clean/modern style with rounded cards
 
 ## Pages
-- Home (hero, search, filters, auction grid, Canarias section, FAQ, footer)
-- Auth (login/register)
-- Create Auction (3-step wizard)
-- Auction Detail (images, bidding, buy now, auto-bid, cancel, contact, messages, ratings)
-- Profile (tabs: subastas, pujas, ganadas, favoritos, valoraciones, avisos)
-- Admin Panel (/admin - protected, admin-only)
+- Home, Auth, Create Auction, Auction Detail, Profile, Pricing (/precios), Admin (/admin)
 
-## Core Features - ALL IMPLEMENTED
+## ALL Implemented Features
 1. User registration/login (JWT)
-2. Auction CRUD with image upload (base64 compressed)
+2. Auction CRUD with image upload
 3. Manual bidding (min +0.50 euro)
 4. Real-time countdown
 5. Auction filtering (category, location, canarias, search, price, sort)
-6. Buy It Now (optional instant purchase price)
-7. Auction cancellation (with bid/time rules)
+6. Buy It Now
+7. Auction cancellation
 8. Seller-Winner contact system
-9. Notifications (outbid, won, cancelled, messages)
-10. Basic messaging between seller/winner
+9. Notifications (outbid, won, cancelled, messages, disputes)
+10. Basic messaging
 11. Favorites/Watchlist
-12. Automatic bidding system
-13. **Rating system** (1-5 stars + comment, buyer/seller mutual, shown on cards/detail/profile)
-14. **Admin panel** (stats, user management, auction management, protected route)
+12. Automatic bidding
+13. Rating system (1-5 stars + comment)
+14. Admin panel (stats, users, auctions management)
+15. **Monetization: Subscription plans** (free/vendedor 2.99/pro 6.99)
+16. **Monetization: Featured listings** (destacada 0.49/home 0.99/urgente 0.29)
+17. **Monetization: Admin payment toggle** (on/off globally)
+18. **Monetization: Stripe integration** (checkout sessions for subscriptions + featured)
+19. **Monetization: Plan limits** (free: 5 auctions/month, paid: unlimited)
+20. **Monetization: Badges** (Destacada, Home, Urgente, Vendedor Verificado)
+21. **Dispute system** (open, review, resolve, close)
+22. **Dispute notifications** (status change alerts to both parties)
+23. **Dispute messaging** (buyer/seller/admin can add messages)
 
 ## Key API Endpoints
-- `/api/auth/register`, `/api/auth/login`
-- `/api/subastas` (GET, POST)
-- `/api/subastas/{id}` (GET)
-- `/api/subastas/{id}/pujar` (POST)
-- `/api/subastas/{id}/comprar-ya` (POST)
-- `/api/subastas/{id}/cancelar` (POST)
-- `/api/subastas/{id}/auto-pujar` (POST)
-- `/api/notificaciones` (GET), `/api/notificaciones/{id}/leer` (PUT), `/api/notificaciones/leer-todas` (PUT)
-- `/api/mensajes` (POST), `/api/mensajes/{auction_id}` (GET)
-- `/api/favoritos/{auction_id}` (POST toggle), `/api/favoritos` (GET)
-- `/api/contacto/{auction_id}` (GET)
-- `/api/usuarios/{id}` (GET, PUT)
-- `/api/valoraciones` (POST), `/api/valoraciones/usuario/{id}` (GET), `/api/valoraciones/subasta/{id}` (GET)
-- `/api/admin/stats` (GET), `/api/admin/usuarios` (GET), `/api/admin/subastas` (GET)
-- `/api/admin/usuarios/{id}` (DELETE), `/api/admin/subastas/{id}` (DELETE)
+### Auth
+- POST /api/auth/register, POST /api/auth/login
+### Auctions
+- GET/POST /api/subastas, GET /api/subastas/{id}
+- POST /api/subastas/{id}/pujar, /comprar-ya, /cancelar, /auto-pujar
+### Social
+- GET/POST /api/notificaciones/*, POST/GET /api/mensajes/*
+- POST/GET /api/favoritos/*, GET /api/contacto/{id}
+### Ratings
+- POST /api/valoraciones, GET /api/valoraciones/usuario/{id}, GET /api/valoraciones/subasta/{id}
+### Plans & Payments
+- GET /api/planes, GET /api/suscripciones/mi-plan
+- POST /api/suscripciones/crear-sesion, POST /api/suscripciones/cancelar
+- POST /api/destacados/crear-sesion, POST /api/destacados/activar-gratis
+- GET /api/pagos/estado/{session_id}, POST /api/webhook/stripe
+### Disputes
+- POST /api/disputas, GET /api/disputas/mis-disputas, GET /api/disputas/{id}
+- POST /api/disputas/{id}/mensaje
+### Admin
+- GET/PUT /api/admin/config, GET /api/admin/stats
+- GET /api/admin/usuarios, DELETE /api/admin/usuarios/{id}
+- GET /api/admin/subastas, DELETE /api/admin/subastas/{id}
+- GET /api/admin/disputas, PUT /api/admin/disputas/{id}/estado
 
 ## DB Collections
-- `users`: id, name, email, password_hash, is_admin, rating_avg, rating_count, created_at
-- `auctions`: id, title, description, images, starting_price, current_price, buy_now_price, duration, end_time, category, location, delivery_type, seller_id, seller_name, bids[], bid_count, status, winner_id, winner_name, created_at
-- `notifications`: id, user_id, type, auction_id, auction_title, message, read, created_at
-- `messages`: id, auction_id, sender_id, sender_name, receiver_id, content, created_at
-- `favorites`: user_id, auction_id, created_at
-- `auto_bids`: id, auction_id, user_id, user_name, max_amount, active, created_at
-- `ratings`: id, auction_id, rater_id, rater_name, rated_id, rating (1-5), comment, created_at
+- users, auctions, notifications, messages, favorites, auto_bids, ratings
+- settings (payments_enabled toggle)
+- featured_listings (auction_id, type, active)
+- disputes (auction_id, reporter, reported, reason, status, messages)
+- payment_transactions (session_id, type, status)
 
 ## Credentials
-- Admin: admin@lapopo.es / admin123 (is_admin=true)
-- Demo: carlos@lapopo.es / demo123
-- Demo: maria@lapopo.es / demo123
+- Admin: admin@lapopo.es / admin123
+- Demo: carlos@lapopo.es / demo123, maria@lapopo.es / demo123
 
-## Testing
-- Iteration 1: Initial MVP - passed
-- Iteration 2: All features (33/33 backend, 14/14 frontend)
-- Iteration 3: Ratings + Admin (22/22 backend, 16/16 frontend)
-- Test files: /app/backend/tests/test_lapopo_api.py, /app/backend/tests/test_admin_ratings.py
-
-## Completed
-- [x] MVP (auth, CRUD, bidding, countdown, filters) - March 2026
-- [x] Bug fixes (price input, footer 2026, seed data) - March 2026
-- [x] Buy It Now, Cancellation, Contact system - March 2026
-- [x] Notifications, Messaging, Favorites, Auto-bidding - March 2026
-- [x] Rating system (1-5 stars, comments, profile display) - March 2026
-- [x] Admin panel (stats, user/auction management) - March 2026
+## Completed - March 2026
+- [x] MVP (auth, CRUD, bidding, countdown, filters)
+- [x] Bug fixes + Buy It Now + Cancellation + Contact
+- [x] Notifications, Messaging, Favorites, Auto-bidding
+- [x] Rating system + Admin panel
+- [x] Monetization system (plans, Stripe, featured, badges)
+- [x] Dispute system (open, review, resolve, notifications)
 
 ## Future/Backlog
-- P1: Image upload to cloud storage (currently base64)
-- P2: Payment integration (Stripe)
+- P1: Image upload to cloud storage
 - P2: Push notifications (web)
 - P2: Search autocomplete
 - P3: Auction categories management from admin
